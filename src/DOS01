@@ -7,7 +7,7 @@ DRIVEC * &00
  < &00
  > &02
         GBLL    $emu
-$emu    SETL    1=1
+$emu    SETL    1=0
 
 RAMVER * &FF
 RAMGO * &FF
