@@ -1,0 +1,191 @@
+;*** File 10 *** - DOS10
+ TTL - DOS10 -  Copy files
+ OPT &01
+;* Copies files *
+
+CPYFIL JSR SETWLD
+ JSR GET2DR
+ JSR CHKSYN
+ JSR GETNAM
+ JSR CHKDSF
+ LDA FDRIV
+ JSR DODRIV
+ JSR ERRLOK
+CPYFL3 LDA QUALIF
+;**************************QSTORE
+ PHA ; Save bytes, instead of QSTORE
+ LDA VTEMP
+ STA LTEMP
+ JSR PRTINF
+ LDXIM &00
+COPYL LDAAY CATLOW
+ STAZX WORK + &0B
+ STAAX NAMTRA
+ LDAAY CATHIG
+ STAZX WORK + &01
+ STAAX TMPCIN + &02
+ INX
+ INY
+ CPXIM &08
+ BNE COPYL
+ LDA WORK + &07
+ JSR ISOLEN
+ STA WORK + &09
+ LDA WORK + &05
+ CLC
+ ADCIM &FF
+ LDA WORK + &06
+ ADCIM &00
+ STA WORK + &0A
+ LDA WORK + &09
+ ADCIM &00
+ STA WORK + &0B
+ LDA TMPCIN + &09
+ STA WORK + &0C
+ LDA TMPCIN + &08
+ ANDIM &03
+ STA WORK + &0D
+ LDAIM &FF  ;Set the output dir flag
+ STA LINNO
+ JSR MVDKDA
+ JSR CHKDSF
+ LDA FDRIV
+ JSR DODRIV
+ JSR GETDIR
+ LDA LTEMP
+ STA VTEMP
+;**************************QSTORE
+ PLA ; Save bytes, instead of QSTORE
+ STA QUALIF
+ JSR NEXT
+ BCS CPYFL3
+ RTS
+
+REGEN JSR SWPFCB
+ JSR CHKDST
+ LDA TDRIV
+ STA FDRIVE
+ LDA QUALIF
+ PHA    ;save lock status
+ JSR GETDIR
+ JSR LOOKW
+ BCC COPYFE
+ JSR DELFIL
+COPYFE PLA
+ STA QUALIF
+ JSR DECODL
+ JSR DECODE
+ LDA WORK + &08
+ JSR ISOLEN
+ STA WORK + &0A
+ JSR GENFIL
+ LDA WORK + &08
+ ANDIM &03
+ PHA
+ LDA WORK + &09
+ PHA
+ JSR SWPFCB
+ PLA
+ STA WORK + &0E
+ PLA
+ STA WORK + &0F
+ RTS
+
+SWPFCB LDXIM &11
+SWPFC0 LDAAX TMPCIN
+ LDYZX WORK
+ STAZX WORK
+ TYA
+ STAAX TMPCIN
+ DEX
+ BPL SWPFC0
+ RTS
+
+;Move Disk Data
+;On entry:-
+;FDRIV: Source drive
+;TDRIV: Destination drive
+;WORK + $0F: Dest sec no (H)
+;     + $0E:             (L)
+;     + $0D: Src sec no (H)
+;     + $0C:            (L)
+;     + $0B: Secs to move (H)
+;     + $0A:              (L)
+;
+;Used internally:-
+;     + $09: Sec no to R/W (H)
+;     + $08:               (L)
+;     + $07: Sectors to shift this time
+;     + $06: Zero (Low length)
+;     + $05:
+;     + $04:
+;     + $03: Start of buffer (H)
+;     + $02:                 (L) (Zero)
+;     + $01:
+;     + $00:
+MVDKDA LDAIM &00
+ STA WORK + &02
+ STA WORK + &06
+ BEQ CPYFL8 ; Always, to Precheck the length
+
+CPYFL5 LDA WORK + &0A
+ TAY
+ CMP FRSIZE
+ LDA WORK + &0B
+ SBCIM &00
+ BCC SIZET
+ LDY FRSIZE
+SIZET STY WORK + &07
+ LDA WORK + &0C
+ STA WORK + &09
+ LDA WORK + &0D
+ STA WORK + &08
+ LDA FRPAGE
+ STA WORK + &03
+ LDA FDRIV
+ STA FDRIVE
+ JSR CHKDSF
+ JSR DETUBE
+ JSR DRVSEL
+ JSR BLKRD
+ LDA TDRIV
+ STA FDRIVE
+ BIT LINNO
+ BPL CPYFL9
+ JSR REGEN
+ LDAIM &00
+ STA LINNO
+CPYFL9 LDA WORK + &0E
+ STA WORK + &09
+ LDA WORK + &0F
+ STA WORK + &08
+ LDA FRPAGE
+ STA WORK + &03
+ JSR CHKDST
+ JSR DETUBE
+ JSR DRVSEL
+ JSR BLKWR
+ LDA WORK + &07
+ CLC
+ ADC WORK + &0E
+ STA WORK + &0E
+ BCC CPYFL6
+ INC WORK + &0F
+CPYFL6 LDA WORK + &07
+ CLC
+ ADC WORK + &0C
+ STA WORK + &0C
+ BCC CPYFL7
+ INC WORK + &0D
+CPYFL7 SEC
+ LDA WORK + &0A
+ SBC WORK + &07
+ STA WORK + &0A
+ BCS CPYFL8
+ DEC WORK + &0B
+CPYFL8 LDA WORK + &0A ; This is here for the Precheck
+ ORA WORK + &0B
+ BNE CPYFL5
+ RTS
+ 
+ LNK DOS11

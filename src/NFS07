@@ -1,0 +1,439 @@
+
+; NFS07
+ TTL Command Line Decoding
+ OPT VIII2
+
+; The command line interpreter is courtesy Roger Wilson
+; but has the usual 'top bit set' bug removed for the
+; purposes of development. The routine DECODE is passed
+; a string via (X,Y) and this is decoded and the
+; appropriate actions taken. Unrecognised command lines
+; are dealt with by a routine COMERR placed at the
+; end of the command table COMTAB.
+
+DECODE   ;is passed a string via X and Y, and decodes
+;the command to produce an address in WORK which
+;is jumped to. The registers are saved as they
+;will no doubt come in useful for something.
+
+ JSR PUTREG ;save pointer
+
+ LDXIM FILLER
+ STX CRFLAG ; inactive=$FF
+ STX ESCAP ;** enable escape
+DECLP1 LDYIM FILLER
+DECFIR INY
+ INX
+DECMOR LDAAX COMTAB
+ BMI DECDON ;all done yet ?
+ EORIY POINTR
+ ANDIM &DF ;force UPPER case
+ BEQ DECFIR
+ DEX
+DECMIN INX
+ LDAAX COMTAB
+ BPL DECMIN
+ LDAIY POINTR
+ INX
+ CMPIM "." ;look for abbrev's
+ BNE DECLP1 ;else try the next one
+ INY
+ DEX
+ BCS DECMOR ;round again
+DECDON PHA ;this bit circumvents the "top bit" bug
+ LDAAX COMTAB +&01
+ PHA
+ RTS ;leap away at random
+
+COMTAB   ;table of commands
+ = "I." ;fudge here
+ = !(/(COMERR - &01 ) )
+ = COMERR - &01
+ = "I AM"
+ = !(/(LOGON -&01 ) )
+ = LOGON -&01
+ = "EX"
+ = !(/(INFALL - &01 ))
+ = INFALL - &01
+ = "BYE",CR
+ = !(/(BYE -&01 ) )
+ = BYE -&01
+ = !(/(COMERR -&01 ) )
+ = COMERR -&01
+
+
+INFALL   ;does the System/3 type of operation
+;to fully examine all entries in the catalogue.
+
+ LDXIM ONE ;arg to examine
+ LDAIM  3
+ BNE CAT0
+
+CAT   ;does the catalogue operation. This involves a header
+;request and repeated interrogation of examine until
+;a total of zero entries is examined. This indicates
+;the end of the catalogue.  The data is received in pre-
+;formatted chunks, to a buffer which abuts the Examine
+;request buffer and ends at RXBUFE. On entry X,Y point to
+;the command line after "CAT" or "." .
+
+ LDXIM THREE
+ STX CRFLAG ;active#$FF
+ LDYIM &FF
+ STY ESCAP ;** 9/12/83 **
+ INY
+ LDAIM &0B
+CAT0 STA WORK +&05 ;number of entries to get
+ STX WORK +&07 ;arg to examine
+ LDAIM SIX
+ STA RXBUF ;argument for Read Object Info
+ JSR QUOTER ;look for spaces,quoted strings etc
+ LDXIM ONE
+ JSR CATLP0 ;copy the filetitle
+
+ LDYIM FCREAD ;get function code
+ JSR DOFSOP ;perform the transfer of info
+
+ LDXIM THREE
+ JSR STRING ;print the name of examined directory
+
+ JSR VSTRNG
+ = "("
+ LDA RXBUF +&0E ;get the cycle number
+ JSR DECOUT ;****** should be decimal *******
+ JSR VSTRNG
+ = ")     "
+
+; NOP
+; JSR FILL5 ;print seven spaces
+
+ LDY RXBUF +&0D;inspect the access byte
+ BNE CAT1 ;zero is offset of "Owner"
+ JSR VSTRNG
+ = "Owner",CR
+ BNE CAT2
+CAT1 JSR VSTRNG
+ = "Public",CR
+
+CAT2 LDYIM FCUSER ;code for user environment
+ JSR DOFSOP ;X undefined here, only sending TX hdr
+;now have the CSD, DISC and LIB names
+;also X=0 on exit
+
+ INX
+ LDYIM &10 ;long name here
+ JSR STRIN1 ;print the disc name
+ JSR VSTRNG
+ = "    Option "
+ LDA OPT
+ TAX
+ JSR HEXOUT ;****** should be decimal *******
+ JSR VSTRNG
+ = " ("
+
+ LDYAX OPTTXT
+CATTXT LDAAY TEXTTB ;write the message
+ BMI CATOPT
+ JSR OSASCI
+ INY
+ BNE CATTXT
+
+CATOPT JSR VSTRNG
+ = ")", CR,"Dir. "
+ LDXIM &11
+ JSR STRING ;print the CSD name
+; JSR FILL5 ;more spaces
+
+ JSR VSTRNG
+ = "     Lib. "
+ LDXIM &1B
+ JSR STRING
+ JSR OSCRLF
+
+CATLP2 STY TXBUF +&01 ;entry point to examine
+ STY WORK +&04
+ LDX WORK +&05
+ STX TXBUF +&02 ;entries to get
+
+ LDX WORK +&07
+ STX TXBUF
+ LDXIM THREE
+ JSR CATLP0 ;copy filename into TXBUF +04+
+
+ LDYIM FCEXAM ;examine function code
+ JSR DOFSOP
+
+ INX
+ LDA RXBUF ;get entries examined
+ BNE CATJD1
+ JMP OSNEWL ;Newline and return
+
+CATJD1 PHA ;save here
+
+CATLP7 INY
+ LDAAY RXBUF ;look for delimiter
+ BPL CATLP7
+ STAAY RXBUF - 1 ;move it back one place
+
+ JSR INFOL5 ;print the data from offset in X
+ PLA
+ CLC
+ ADC WORK +&04 ;update by number of entries examined
+ TAY
+ BNE CATLP2
+
+STRING LDYIM &0A ;print chars in RXBUF, from X
+STRIN1 LDAAX RXBUF
+ JSR OSASCI
+ INX
+ DEY
+ BNE STRIN1 ;count on Y
+ RTS
+TEXTTB 
+
+OPTTXT = OPTX0 - TEXTTB
+ = OPTX1 - TEXTTB
+ = OPTX2 - TEXTTB
+ = OPTX3 - TEXTTB
+
+LOAD = "L."
+RUN = "!BOOT",CR
+EXEC = "E.!BOOT"
+OFF = CR
+
+BOOTLO = OFF
+ = LOAD
+ = RUN
+ = EXEC
+
+BOOTH4 * OFF :SHR: &8
+BOOTH1 * LOAD :SHR: &8
+BOOTH2 * RUN :SHR: &8
+BOOTH3 * EXEC :SHR: &8
+
+OPTX3 = "Exec"
+
+ [ OPTX3 - TEXTTB :SHR:  8=0
+ | 
+ ! 0,"string out of range"
+ ]
+
+NUMOUT LDXIM &04
+NUM01 LDAIY TEMPX
+ JSR HEXOUT
+ DEY
+ DEX
+ BNE NUM01
+NUMSP LDAIM SPACE
+ BNE DBWRL2
+
+OPTX0 = "Off"
+
+ [ OPTX0 - TEXTTB :SHR:  8=0
+ | 
+ ! 0,"string out of range"
+ ]
+
+
+CATLP
+COPYCL    ;copy the command line pointed at by TEMPX
+;into the TXBUF. Nice routine, should get lots of use.
+
+ LDXIM ZERO ;useful for specific copying
+COPYCX
+CATLP0
+ LDYIM ZERO
+COPLP1 LDAIY POINTR ;get the command line
+ STAAX TXBUF ;into the Txbuf, offset set by X
+ INX
+ INY
+ EORIM CR ;carriage return ?
+ BNE COPLP1
+INFOEX RTS ;Y holds length+1 of command line
+
+OPTX1 = "Load"
+
+ [ OPTX1 - TEXTTB :SHR:  8=0
+ | 
+ ! 0,"string out of range"
+ ]
+
+
+INFO   ;called from COMERR when the command code
+;is four. Command codes are looked up in CCTAB.
+
+ LDXIM ZERO
+INFOLP LDAAX RXBUF
+ BMI INFOEX
+ BNE INFOL2
+
+INFOL5 LDY CRFLAG
+ BMI INFOL3 ;flag inactive
+ INY
+ TYA
+ ANDIM &03 ;2 bit counter
+ STA CRFLAG
+
+ BEQ INFOL3
+ JSR VSTRNG
+ = "  "
+ BNE INFOL4
+
+INFOL3 LDAIM CR
+INFOL2 JSR OSASCI ;deal with carriage return, line feed
+INFOL4 INX
+ BNE INFOLP
+
+OPTX2 = "Run"
+
+ [ OPTX2 - TEXTTB :SHR:  8=0
+ | 
+ ! 0,"string out of range"
+ ]
+
+
+DECOUT TAY ;decimal output routine
+ LDAIM &64 ;subtract hundred
+ JSR DEC1 ;get first digit
+ LDAIM &0A
+ JSR DEC1 ;and the second
+ LDAIM &01
+DEC1 STA JWORK
+ TYA ;save value over call in Y
+ LDXIM &2F ;ascii '0'
+ SEC
+DEC2 INX
+ SBC JWORK
+ BCS DEC2
+ ADC JWORK ;make positive again
+ TAY
+ TXA
+DBWRL2
+DECCH JMP OSASCI
+
+ [ &FF=0
+HEXOUT
+ PHA
+ LSRA
+ LSRA
+ LSRA
+ LSRA
+ JSR DBWRL1
+ PLA
+ ANDIM &0F
+DBWRL1 ORAIM &30
+ CMPIM &3A
+ BCC DBWRL2
+ ADCIM &06
+DBWRL2 BNE DECCH
+ ]
+
+ [ &FF=0
+FILL5 LDXIM  5
+FILL JSR NUMSP
+ DEX
+ BNE FILL
+ RTS
+ ]
+
+CMNDR JSR QUOTED ;deal with quotes etc
+ JSR CATLP ;from *RUN commands
+
+CMND    ;load as command, response is as for LOAD(3)
+;but jump to exec address at the end of transfer.
+
+ LDYIM  0 ;use MOS reading routines
+ CLC
+ JSR GSINIT
+CMND3 JSR GSREAD
+ BCC CMND3 ;skip file name
+
+ [ &FF=0
+ DEY
+CMND2 INY
+ LDAIY &F2
+ CMPIM SPACE
+ BEQ CMND2 ;look for non-space char
+ |
+ JSR SKPSP ;** 9/8/83 **
+ ]
+
+ CLC
+ TYA
+ ADC &F2
+ STA JCMNDP
+ LDA &F3
+ ADCIM  0
+ STA JCMNDP + 1
+
+ LDXIM /(CMNDP )
+ STX TEMPY ;X=$0F, dummy for buffer length
+ LDAIM CMNDP
+ STA TEMPX ;point to CB
+ STA CMNDP + 6
+
+ LDXIM &4A ;maximum buffer allowed
+ LDYIM FCCMND
+ JSR LODCMD ;perform load as command
+
+; SEC ;update CMNDP
+
+ LDA TBFLAG ;get flag
+ BEQ CMNDX ;C=1 here
+ ADC RXBUF +&06
+ ADC RXBUF +&07
+ BCS CMNDX ;skip if HOST-side of TUBE
+
+ JSR TCLAIM
+ LDXIM RXBUF +&04
+ LDYIM /(RXBUF +&04 )
+ LDAIM &04 ;for JUMP
+ JMP TBINIT ;leap over the TUBE
+
+CMNDX ROLA ;Set A=1 here ** 14/11/83 **
+ JMI RXBUF +&04 ;leap to exec address
+
+SLIB    ;user change library environment. Call passed
+;to FS, jump here on return when CC=9. Just store the handle in LIB.
+
+ STY LIB ;correct handle
+ BCC CATDON ;do return
+
+SDIR    ;user change currently selected directory.
+;Jump here on return from COMERR when CC=7. Save handle in CSD.
+
+ STY CSD
+RTSS
+CATDON JMP REGGET
+
+
+LOGIN SEC
+SDISC LDXIM THREE ;come here on 'SDISC', X=2
+ BCC LOGON3
+LOGON2 LDAAX RXBUF
+ STAAX URD
+LOGON3 DEX
+ BPL LOGON2 ;save the handles
+ BCC CATDON ;do return
+
+ LDY OPT
+ LDXAY BOOTLO 
+ ;cheating way of saving code if addresses are identical
+ [ BOOTH4 - BOOTH1 =0
+ LDYIM BOOTH1 
+
+ |
+ ! 0,"Option over page boundary"
+
+BOOTHI = /(OFF )
+ = /(LOAD )
+ = /(RUN )
+ = /(EXEC )
+
+ LDAAY BOOTHI
+ TAY
+ ]
+ JMP OSCLI
+
+ LNK NFS08
+

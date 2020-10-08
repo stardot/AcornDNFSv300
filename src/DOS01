@@ -1,0 +1,976 @@
+;*** File One *** > DOS01
+
+ TTL - DOS01 -  Storage Allocation
+ OPT &01
+
+DRIVEC * &00
+ < &00
+ > &02
+        GBLL    $emu
+$emu    SETL    1=1
+
+RAMVER * &FF
+RAMGO * &FF
+NOENAB * &FF
+VERH * &01
+VERM * "2"-"0"
+VERL * "0"-"0" 
+
+TUBEID * &01 ; My number for claiming/releasing Tube (c)
+; V n, |? = delete in strings trapped
+
+; V m
+; CLI in OSWORD $7F for typeahead
+; Delay in CMDDRV for write Ops
+
+; V l
+; Locked in OSFILE 1,2,3 removed
+
+; V j/k
+; Has semaphores in (BIT) QSTORE to say :
+; PL => FDC reinit. JSR ZTRKSC in next DRVSEL 0
+; VC => ditto. JSR ZTRKSC in next DRVSEL 1
+
+; Version i
+; *DIR $,*SAVE Q.ZOB,*DIR :2
+; leaving you in :2.Q is fixed
+VERBIN * &09  ;Version number (binary)
+ROMLOC * &9F9D ; **$9FC8-$0054+$0011  ;ORG of double ROM version (16k)
+
+ [ RAMVER=0
+DOS
+ ORG RAMLOC
+ JMP RAMLOC + &03
+ JMP CALLED
+ |
+DOS
+ ORG ROMLOC
+; = $00,$00,$00
+ JMP CALLED
+; = $82,COFF,VERBIN,"DFS",$00
+; = VERH + '0'
+; = '.'
+; = VERM + '0'
+; = VERL + '0'
+;COFF = $00,"(C)",$00
+ ]
+
+;* Zero Page - takes up $20 bytes *
+
+ ^ &00A0  ;NMI allocation (8)
+
+PRENMI # &01  ;Store for previous owner
+SAVCOM # &01  ;Disk controller cmd
+CNTA # &01  ;Error count
+READNO # &03  ;Total bytes to read
+RAMADR # &02  ;Indirection for NMI
+
+
+ ^ &00A8  ;Utility allocation (8)
+
+LINNO # &02  ;BCD line number
+UTEMP # &01  ;Temp store
+LTEMP # &01  ;Temp utility store
+BLDTBL # &02  ;Misc table
+PTEMP # &02  ;Used by VSTRNG
+
+ ^ &00B0  ;High level allocation (20)
+
+;1st $10 bytes can withstand being
+;overwritten between calls.
+TEMP # &02  ;Temporary zero page
+XTEMP # &01
+ITEMP # &01
+ATEMP # &01
+YTEMP # &01
+VTEMP # &02
+ZTEMP # &01
+ETEMP # &01
+WORK # &12
+QUALIF # &01
+FDRIVE # &01  ;Drive to use.
+TRACK # &01
+SECTOR # &01
+
+COMTXT * WORK + &02  ;Pointer for HELP & SYNTAX
+
+;* NMI address and base for all other
+; memory allocation *
+
+INTNMI * &0D00
+
+
+;* Non-zero page storage >$20 bytes ! *
+;Memory that does not require saving
+
+ ^ INTNMI + &0340
+
+SAVPAR # &05  ;Temp save of NMI prms
+TMPCIN # &0B
+NAMTRA # &08
+TMPNAM # &08
+DOSRAM # &12
+LDLOW # &02  ;Low bytes of load
+HIWORK # &08
+SECNO # &01  ;Sectors left on track
+BTEMP # &02  ;Used in BGBP
+CTEMP # &01  ;Used in BGBP
+TUBCOM # &01  ;Direction of tube
+TUMFLG # &01  ;A tube flag
+CATDRV # &01  ;Catalog drive
+OLDDRV # &01  ;Currently selected drive
+XSTORE # &01
+QSTORE # &01
+DUFFLG # &01 ; DUF flag - distinguishes closing/ensuring files
+
+;Memory that does require saving
+
+ ^ INTNMI + &03C0
+
+DCBMAP # &01
+DCBBIT # &01
+DCBY # &01
+ ; *******SEQWA # $01
+SEQWB # &01
+SEQWC # &01
+SEQWX # &01
+MONFLG # &01  ;Monitor flag
+ENAFLG # &01  ;Command enable flag
+NMIFLG # &01  ;Got NMI Flag
+DEFQUA # &01  ;Default qualifier
+DEFDSK # &01  ;Default disk
+LIBQUA # &01  ;Library qualifier
+LIBDSK # &01  ;Library disk
+WILDCH # &01  ;Wild char ($FF => no wild)
+DASHOP # &01  ;Dash operator ($FF => no dash)
+FRPAGE # &01  ;First free page
+FRSIZE # &01  ;No. of free pages
+FDRIV # &01  ;Source drive (MVDKDA)
+TDRIV # &01  ;Destination drive (MVDKDA)
+COLDS # &01  ;Cold start flag
+MEMFLG # &01  ;Got memory
+TUBFLG # &01  ;Tube flag
+NOTUBE # &01  ;No tube flag
+QTEMP # &02
+LINADR # &02
+FCBADR # &02
+SEQSEM # &01
+
+
+;* Tempory buffer
+BUFFER * INTNMI + &0300  ;GP Buffer
+ERRBUF * &0100  ;Error buffer
+
+;** Equates **
+;* Error numbers *
+ ^ &CF  ;Error base
+ATTNUM # &00 - &01  ;Bad attribute
+DIRNUM # &00 - &01  ;Bad directory
+DRVNUM # &00 - &01  ;Bad drive
+FNANUM # &00 - &01  ;Bad filename
+OPTNUM # &00 - &01  ;Bad option
+ # &00 - &01  ;Bad sum (unused)
+DKPNUM # &00 - &01  ;Disk read only
+DKCNUM # &00 - &01  ;Disk changed
+DERNUM # &00 - &01  ;Disk fault
+NORNUM # &00 - &01  ;Disk full
+DFANUM # &00 - &01  ;Drive fault
+FAXNUM # &00 - &01  ;File exists
+LOKNUM # &00 - &01  ;File locked
+FOPNUM # &00 - &01  ;File open
+RDONUM # &00 - &01  ;File read only
+TMFNUM # &00 - &01  ;Too many open files
+CNXNUM # &00 - &01  ;Can't extend
+DRFNUM # &00 - &01  ;Directory full
+CNENUM # &00 - &01  ;Not enabled
+
+;Special errors (in CFS)
+COMNUM * &FE  ;Bad command
+EOFNUM * &DF  ;EOF
+CHNNUM * &DE  ;Channel
+SYNNUM * &DC  ;Syntax errors
+NOFNUM * &D6  ;File not found
+ESCNUM * &11  ;Escape
+
+
+;* System equates *
+MASDSK * &00  ;Start disk
+MASQUA * "$"  ;Start qualifier
+MASWLD * "#"  ;Wild char
+MASDSH * "*"  ;Dash char
+ [ DRIVEC=0
+COMNO * &0E  ;Number of commands
+ |
+COMNO * &0D
+ ]
+UTLNO * &05  ;Number of utilities
+HLPNO * &02  ;Number of help commands
+TRIES * &0A  ;Retries at loading
+SECTRK * &0A  ;Sectors per track
+FSYSNO * &04  ;Filing system number
+
+
+;Reason code for claim NMI
+ ^ &00
+WRMCLA # &01  ;Write from memory
+RDMCLA # &01  ;Read into memory
+NOPCLA # &01  ;Check error & return
+WTFCLA # &01  ;Write from tube
+WMFCLA # &01  ;Write from memory
+RTFCLA # &01  ;Read to tube
+RMFCLA # &01  ;Read to memory
+
+
+;* MOS RAM locations *
+WORDA * &00EF  ;A of OSWORD call
+WORDX * &00F0  ;X in OSWORD call
+WORDY * &00F1  ;Y in OSWORD call
+ROMID * &00F4  ;ID of current ROM
+LINPTR * &00F2  ;Pointer to line
+ESCFLG * &00FF  ;Escape flag
+VTAB2 * &0212  ;Start of vectors to zap
+PRIPTR * &0DF0  ;Pointer to private pages
+
+
+;* Pseudo-legal MOS entries *
+TUBADR * &0406  ;Set up address for tube
+RDINIT * &FFC2  ;Initialise read
+; ************RDCHR * $FFC5  ;Read char ; ********** HMT
+
+;* Legal MOS entries *
+OSRDCH * &FFE0  ;Read char from kbd
+OSWRCH * &FFEE  ;Write char to screen
+OSCRLF * &FFE7  ;Print CR LF
+OSASCI * &FFE3  ;OSWRCH + CR]CRLF
+OSBYTE * &FFF4  ;Misc OS calls
+OSWORD * &FFF1  ;More misc OS calls
+OSBPUT * &FFD4  ;Put bytes to file
+OSBGET * &FFD7  ;Get bytes from file
+OSFIND * &FFCE  ;Open file
+OSCLI * &FFF7  ;Execute command line
+
+;* OSBYTE call numbers *
+BYTESD * &03  ;Set OSWRCH destination
+BYTECB * &0F  ;Clear buffer
+BYTECS * &77  ;Close spool & exec files
+BYTECK * &78  ;Kill key
+BYTEKS * &7A  ;Keyboard scan
+BYTEAE * &7E  ;Acknowledge escape
+BYTEPA * &83  ;Get current page
+BYTETM * &84  ;Get top of memory
+BYTESR * &8E  ;Start language
+BYTESC * &8F  ;Do sideways call
+BYTESV * &A8  ;Get address of sideways vectors
+BYTELR * &BA  ;Find lang ROM ID
+BYTESH * &C7  ;Get spool handle
+BYTETB * &EA  ;Tube ?
+BYTEWD * &EC  ;get Write Destination
+BYTESW * &FF  ;Read switches
+
+;* Sideways reason codes *
+SWCIN1 * &01  ;Init 1st pass (claim static)
+SWCIN2 * &02  ;Init 2nd pass (claim dynamic)
+SWCIN3 * &03  ;Init 3rd pass (auto-boot)
+SWCLIN * &04  ;*Command passed
+SWCWRD * &08  ;Unknown OSWORD call
+SWCHLP * &09  ;HELP !!
+SWCCME * &0A  ;Claim memory
+SWCRNM * &0B  ;Release NMI
+SWCCNM * &0C  ;Claim NMI
+SWCVCL * &0F  ;I've claimed vectors
+SWCIFS * &12  ;Init filing system Y
+
+;* Device control addresses *
+FDCD * &FE84  ;Data register (disk)
+FDCRES * &FE82  ;Reset register
+FDCR * &FE81
+FDCP * &FE81
+FDCC * &FE80
+FDCS * &FE80  ;Status register (disk)
+TUBE * &FEE5  ;1 byte FIFO in tube
+ROMSW * &FE30  ;ROM switching port
+
+;* Disk directory loaded in store from
+;  $0E00 to $1000 *
+;
+;Directory info:-
+;DIRLOW + $00 ] $07: 1st 8 bytes title
+;       + $08 ] $0F: 1st filename
+;       + $10 ] $17: 2nd filename
+;       + ... ] ...: n th filename
+;
+;DIRHIG + $00 ] $04: Last 5 bytes title
+;       + $05      : No entries * 8
+;       + $06 (0,1): Disk length (H)
+;             (4,5): Boot option
+;       + $07      : Disk length (L)
+;
+;CATHIG + $00      : Start addr (M)
+;       + $01      : Start addr (L)
+;       + $02      : Exec addr (M)
+;       + $03      :           (L)
+;       + $04      : Length (M)
+;       + $05      : Length (L)
+;       + $06 (0,1): Start Sector (H)
+;             (2,3): Start Addr (H)
+;             (4,5): Length (H)
+;             (6,7): Exec addr (H)
+;       + $07      : Start sector (L)
+
+
+DIRLOW * INTNMI + &0100
+CATLOW * DIRLOW + &08
+MODIFY * CATLOW + &07
+DIRHIG * INTNMI + &0200
+CYCNO * DIRHIG + &04  ;Directory cycle number
+DIRLEN * DIRHIG + &05
+OPTION * DIRHIG + &06
+CATHIG * DIRHIG + &08
+
+
+;* Sequential file system workspace *
+
+SEQMAP * INTNMI + &0400
+SEQLL * SEQMAP + &09  ;Length (L)
+SEQLM * SEQMAP + &0B  ;Length (M)
+SEQRDO * SEQMAP + &0C  ;File read only bit
+SEQLH * SEQMAP + &0D  ;Length (H) Addr (H)
+SEQLOK * SEQMAP + &0E  ;Locked bit
+SEQLOC * SEQMAP + &0F  ;Disc addr (L)
+SEQPL * SEQMAP + &10  ;Seq pointer (L)
+SEQPM * SEQMAP + &11  ;Seq pointer (M)
+SEQPH * SEQMAP + &12  ;Seq pointer (H)
+SEQBUF * SEQMAP + &13  ;Buffer (H)
+SEQLLA * SEQMAP + &14  ;Length (L)
+SEQLMA * SEQMAP + &15  ;Length (M)
+SEQLHA * SEQMAP + &16  ;Length (H)
+SEQFLG * SEQMAP + &17  ;Flags & drive
+SEQEL * SEQMAP + &18  ;Always zero
+SEQEM * SEQMAP + &19  ;Extent (M)
+SEQEH * SEQMAP + &1A  ;Extent (H)
+SEQBIT * SEQMAP + &1B  ;DCBMAP bit
+SEQDAL * SEQMAP + &1C  ;Disc addr (L)
+SEQDAH * SEQMAP + &1D  ;Disc addr (H)
+SEQUAL * SEQMAP + &1E  ;Qualifer
+SEQCHK * SEQMAP + &1F  ;Checksum
+
+DFSIZE * &40 ;by default, files will be 64 sectors, 16Kbytes
+CR * &0D
+LF * &0A
+
+;    **********************
+;    * END OF STORAGE MAP *
+;    **********************
+
+ TTL - DOS01 -  Useful Subroutines
+ OPT &01
+
+OSFSCM JMI &021E
+
+DSKMSG JSR ESTRNG
+ = &00,"Disk "
+ BCC GSTRNG
+
+ILLMSG JSR ESTRNG
+ = &00,"Bad "
+ BCC GSTRNG
+
+;**********FILMSG JSR ESTRNG
+;********** = $00,"File "
+;********** BCC GSTRNG ;********** HMT
+
+;Print string for error handling
+;Inserts error number
+ESTRNG LDA SEQSEM
+ BNE ESTRN1
+ JSR HMTSPE
+ESTRN1 LDAIM &FF
+ STA CATDRV ; Invalidate old catalog for DFS0.9W
+ STA SEQSEM
+; Alternate entry for if I'm not the current FS
+FSTRNG LDXIM &02
+ LDAIM &00
+ STA ERRBUF
+GSTRNG STA ITEMP
+ PLA  ;Get return address
+ STA PTEMP
+ PLA
+ STA PTEMP + &01
+ LDA ITEMP
+ LDYIM &00
+ JSR TMPINC
+ LDAIY PTEMP
+ STA ERRBUF + &01
+ DEX
+ESTRN0 JSR TMPINC
+ INX
+ LDAIY PTEMP
+ STAAX ERRBUF
+ BMI VSTRNR
+ BNE ESTRN0
+ JSR RELTUB  ;Release tube
+ JMP ERRBUF
+
+;General purpose print string
+VSTRNG STA ITEMP
+ PLA  ;Get return address
+ STA PTEMP
+ PLA
+ STA PTEMP + &01
+ LDA ITEMP
+ PHA
+ TYA
+ PHA
+ LDYIM &00
+VSTRLP JSR TMPINC
+ LDAIY PTEMP
+ BMI VSTRNX
+ JSR PCHR
+ JMP VSTRLP
+VSTRNX PLA
+ TAY
+ PLA
+VSTRNR CLC
+ JMI PTEMP
+
+;Print digit and dot
+DPDOT JSR DIGOUT
+
+;Print dot
+PDOT LDAIM "."
+
+;Print char but not to spool
+PCHR JSR SAVITA
+ PHA
+ LDAIM BYTEWD
+ JSR READBY
+ TXA
+ PHA
+ ORAIM &10
+ JSR WRIWDE
+ PLA
+ TAX
+ PLA
+ JSR OSASCI
+ JMP WRIWDX
+
+;    BYTOUT  PRINTS 2 HEX DIGITS
+;    TO GIVE THE VALUE OF A.
+BYTOUT PHA
+ JSR SFOUR
+ JSR DIGOUT
+ PLA
+;    DIGOUT PRINTS LOWER 4 BITS OF
+;    A AS A HEX DIGIT.
+DIGOUT JSR DIGUT1
+ BNE PCHR ;********** Always ********* HMT
+
+DIGUT1 ANDIM &0F
+ CMPIM &0A
+ BCC DIGOT0
+ ADCIM &06
+DIGOT0 ADCIM &30
+ RTS
+
+;Shift both high and low bytes
+SHFTBO JSR SHFTTW
+ DEX
+ DEX
+
+;Shift two high bytes
+ JSR SHFTT0
+SHFTT0 LDAIY TEMP
+ STAAX HIWORK - &02
+ INX
+ INY
+ RTS
+
+;Shift two bytes from old FCB to WORK
+SHFTTW JSR SHFTON
+SHFTON LDAIY TEMP
+ STAZX WORK
+ INX
+ INY
+ RTS
+
+GETNAM JSR SETDEF
+ JMP GETNM0
+
+FRMNAM JSR SETDEF
+FRMNM1 LDA WORK
+ STA LINPTR
+ LDA WORK + &01
+ STA LINPTR + &01
+ LDYIM &00 
+ JSR SETUPR
+GETNM0 LDXIM " "
+ JSR RDCHR
+ BCS NAMERR
+ STA BUFFER
+ CMPIM "."
+ BNE GETNM1
+GETNM2 STX QUALIF
+ BEQ GETNM0  ;-Always-
+GETNM1 CMPIM ":"
+ BNE GETNM3
+ JSR GETDRV
+ JSR DODRIV
+ JSR RDCHR
+ BCS NAMERR
+;*********** LDXIM MASQUA ; HMT
+ CMPIM "."
+ BEQ GETNM0 ; If just :0.filename leave the Qual HMT
+
+NAMERR JSR ILLMSG
+ = FNANUM,"name",&00
+GETNM3 TAX ; Good qualifier in X
+ JSR RDCHR
+ BCS GETNM4
+ CMPIM "."
+ BEQ GETNM2
+ LDXIM &01
+GETNM5 STAAX BUFFER
+ INX
+ JSR RDCHR
+ BCS GETNM6
+ CPXIM &07 ; **** trap long names ****** HMT
+ BNE GETNM5
+ BEQ NAMERR  ;-Always-
+
+
+;************************************
+; Modified RDCHR to check for control character
+;************************************ HMT
+
+RDCHR JSR &FFC5 ; The pseudo legal MOS entry
+ PHP
+ ANDIM &7F
+ CMPIM &0D ;** Char $8D is specified as legal char in filenames
+ BEQ RDCHOK ;** Jes 8/2/84 **
+
+ CMPIM &20
+ BCC NAMERR
+
+ CMPIM &7F
+ BEQ NAMERR
+
+RDCHOK PLP
+ RTS
+
+;************************************
+
+GETNM4 LDXIM &01
+GETNM6 LDAIM " "
+GETNM7 STAAX BUFFER
+ INX
+ CPXIM &40
+ BNE GETNM7
+
+;Copy filename into WORK + $0B
+COPNAM LDXIM &06
+CLRNM0 LDAAX BUFFER
+ STAZX WORK + &0B
+ DEX
+ BPL CLRNM0
+CLRNM1 RTS
+
+;Print name of file for things with
+; queries.
+PRTNAM JSR SAVITA
+ LDAAY MODIFY
+ PHP
+ ANDIM &7F
+ BNE PTNAM2
+ JSR PDSPC
+ BEQ PTNAM3
+PTNAM2 JSR PCHR
+ JSR PDOT
+PTNAM3 LDXIM &06
+PTNAM0 LDAAY CATLOW
+ ANDIM &7F
+ JSR PCHR
+ INY
+ DEX
+ BPL PTNAM0
+ JSR PDSPC
+ LDAIM " "
+ PLP
+ BPL PTNAM1
+ LDAIM "L"
+PTNAM1 JSR PCHR
+ LDYIM &01  ;Print 1 space
+
+;Prints Y spaces
+YSPACE JSR PSPACE
+ DEY
+ BNE YSPACE
+ RTS
+
+ISOEXE LSRA  ;Isolate exec addr
+ LSRA
+ISOLEN LSRA  ;Isolate length addr
+ LSRA
+ISOLOD LSRA  ;Isolate load addr
+ LSRA
+ ANDIM &03
+ RTS
+
+;Shift right A four or five times
+SFIVE LSRA
+SFOUR LSRA
+ LSRA
+ LSRA
+ LSRA
+ RTS
+
+;Shift left A four or five times
+LFIVE ASLA
+LFOUR ASLA
+ ASLA
+ ASLA
+ ASLA
+ RTS
+
+
+
+ATOT LDA WORK + &02
+ STA RAMADR
+ LDA WORK + &03
+ STA RAMADR + &01
+ LDAIM &FF
+ STA TRACK
+ LDX WORK + &07
+ INX
+ STX READNO + &01
+ LDA WORK + &08
+ JSR ISOLEN
+ STA READNO + &02
+ INC READNO + &02
+ LDA WORK + &06
+ STA READNO
+ BNE ATOT0
+ DEC READNO + &01
+ BNE ATOT0
+ DEC READNO + &02
+ATOT0 LDA WORK + &08
+ ANDIM &03
+ TAX
+ LDA WORK + &09
+TRSCA SEC
+TRSCB INC TRACK
+ SBCIM &0A
+ BCS TRSCB
+ DEX
+ BPL TRSCA
+ ADCIM &0A
+ STA SECTOR
+LOKSUC RTS
+
+GETLOK JSR GETNAM
+ BMI ERRLOK  ;-Always-
+
+FRMLOK JSR FRMNAM
+ERRLOK JSR LOOKUP
+ BCS LOKSUC
+
+NOFIL JSR FSTRNG
+ = NOFNUM,"Not found",&00
+
+INFO JSR SETWLD
+ JSR CHKSYN
+ JSR GETLOK
+INFO0 JSR PRTINF
+ JSR NEXT
+ BCS INFO0
+ RTS
+
+LOOKW LDXIM &06
+LOOKW0 LDAAX WORK + &0B
+ STAAX TMPNAM
+ DEX
+ BPL LOOKW0
+ LDAIM " "
+ STA TMPNAM + &07
+ LDAIM TMPNAM
+ BNE LOOKUX  ;-Always-
+
+NEXT LDXIM &00
+ BEQ NEXT0 ; Always
+
+LOOKUP LDAIM &00
+LOOKUX PHA
+ JSR DIRLD
+ PLA
+ TAX
+ LDAIM /(DIRLOW )
+ STA VTEMP + &01
+ LDAIM &00
+ STA VTEMP
+NEXT0 LDYIM &00
+ LDA VTEMP
+ CMP DIRLEN
+ BCS MATCHF
+ ADCIM &08
+ STA VTEMP
+ JSR MATCHS
+ BCC NEXT0
+ LDA QUALIF  ;Check qualifier
+ LDYIM &07
+ JSR CPCHAR
+ BNE NEXT0
+ LDY VTEMP
+ SEC
+
+;    UNSTEP DECREMENTS Y BY 8.
+;    INVERSE OF STEP
+
+UNSTEP DEY
+ DEY
+ DEY
+ DEY
+ DEY
+ DEY
+ DEY
+ DEY
+ RTS
+
+MATCHS JSR SAVITA
+MATCH1 LDAAX BUFFER
+
+ CMP DASHOP
+ BNE MATCH4
+ INX
+MATCH6 JSR MATCHS
+ BCS MATCHR
+ INY
+ CPYIM &07
+ BCC MATCH6
+
+;*************** so *XABC doesnt match RSTUVWX
+MATHMT LDAAX BUFFER
+ CMPIM " "
+ BNE MATCHF
+ RTS
+MATCH4 CPYIM &07
+ BCS MATHMT
+ JSR CPCHAR
+; *************** HMT
+ BNE MATCHF
+
+MATCH5 INX
+ INY
+ BNE MATCH1
+; *************** HMT
+
+MATCHF CLC
+MATCHR RTS
+
+;Compare A with (VTEMP),Y
+CPCHAR CMP DASHOP
+ BEQ CPRET
+ CMP WILDCH
+ BEQ CPRET
+ JSR CAPS
+ EORIY VTEMP
+ BCS CPCHR0
+ ANDIM &5F
+CPCHR0 ANDIM &7F
+CPRET RTS
+
+;Set A to capitals
+SETCAP PHP
+ JSR CAPS
+ BCS SCAP0
+ ANDIM &5F
+SCAP0 ANDIM &7F
+ PLP
+ RTS
+
+
+;Delete file from directory
+DELFIL JSR CHKOPL
+DELLOP LDAAY CATLOW + &08
+ STAAY CATLOW
+ LDAAY CATHIG + &08
+ STAAY CATHIG
+ INY
+ CPY DIRLEN
+ BCC DELLOP
+ TYA
+ SBCIM &08
+ STA DIRLEN
+LOOKX CLC
+INFRTS RTS
+
+;Is it a letter ?
+; C = 0 => letter
+; C = 1 => NOT letter
+CAPS PHA
+ ANDIM &5F
+ CMPIM "A"
+ BCC CAPS0
+ CMPIM "Z" + &01
+ BCC CAPS1
+CAPS0 SEC
+CAPS1 PLA
+ RTS
+
+;Print info if MONFLG is set
+INFORM BIT MONFLG
+ BMI INFRTS
+
+;Print catalog info about file
+PRTINF JSR SAVITA
+ JSR PRTNAM  ;Print name
+ TYA
+ PHA
+ LDAIM DOSRAM  ;Set up tempory space
+ STA TEMP
+ LDAIM /(DOSRAM )
+ STA TEMP + &01
+ JSR CHUKBK  ;Read cat info
+ LDYIM &02
+ JSR PSPACE
+ JSR PRTIN0  ;Print start addr
+ JSR PRTIN0  ;Print exec addr
+ JSR PRTIN0  ;Print length
+ PLA
+ TAY
+ LDAAY CATHIG + &06  ;Print start sec
+ ANDIM &03
+ JSR DIGOUT
+ LDAAY CATHIG + &07
+ JSR BYTOUT
+ JSR PCRLF
+ JMP DRVSEL ; In case the drive has stopped due to CTRL-N
+;*****************************HMT
+
+;Prints 3 bytes from TMPCIN + Y
+PRTIN0 LDXIM &03
+PRTIN1 LDAAY DOSRAM + &02
+ JSR BYTOUT
+ DEY
+ DEX
+ BNE PRTIN1
+ JSR STEP7
+ JMP PSPACE
+
+;Get directory from disk
+GETDIR JSR SAVITA
+ JMP DIRLDY
+
+;Chucks directory info back into a FCB
+;whose address is in TEMP - and a pain
+;it is too.
+CHUKBK JSR SAVITA
+ TYA  ;Move Y to X as I need
+ PHA  ;Y for IYing
+ TAX
+ LDYIM &12  ;Clear FCB to start with
+ LDAIM &00
+CHUKB7 DEY
+ STAIY TEMP
+ CPYIM &02
+ BNE CHUKB7
+CHUKB5 JSR CHUKB4  ;Move in obvious bits
+ INY
+ INY
+ CPYIM &0E
+ BNE CHUKB5
+ PLA
+ TAX  ;Move in attribute (L)
+ LDAAX CATLOW + &07
+ BPL CHUKB3
+ LDAIM &08  ;Locked
+ STAIY TEMP  ;Y=$0E already
+CHUKB3 LDAAX CATHIG + &06
+ LDYIM &04  ;Move in high bytes
+ JSR CHUKB1  ; Start addr
+ LDYIM &0C
+ LSRA  ;Length
+ LSRA
+ PHA
+ ANDIM &03
+ STAIY TEMP
+ PLA
+ LDYIM &08  ;Exec address
+
+;Moves and fills in $FFs if required
+CHUKB1 LSRA
+ LSRA
+ PHA
+ ANDIM &03
+ STAIY TEMP
+ CMPIM &03  ;If 3 assume means $FFFF
+ BNE CHUKB2
+ LDAIM &FF
+ STAIY TEMP
+ INY
+ STAIY TEMP
+CHUKB2 PLA
+ RTS
+
+;Moves 2 bytes from dir to FCB
+CHUKB4 JSR CHUKB6
+CHUKB6 LDAAX CATHIG
+ STAIY TEMP
+ INX
+ INY
+ RTS
+
+;Increment TEMP
+TMPINC INC PTEMP
+ BNE TMPIN0
+ INC PTEMP + &01
+TMPIN0 RTS
+
+;Save A,X,Y so that on a RET they get
+; restored.
+SAVITA PHA
+ TXA
+ PHA
+ TYA
+ PHA
+ LDAIM /(SAVRTA - &01 )
+ PHA
+ LDAIM SAVRTA - &01
+ PHA
+SAVIT0 LDYIM &05  ;Copy the RetAddr,A,X,Y block
+SAVIT1 TSX
+ LDAAX &107
+ PHA
+ DEY
+ BNE SAVIT1
+ LDYIM &0A  ;Shift all down two
+SAVIT2 LDAAX &109
+ STAAX &10B
+ DEX
+ DEY
+ BNE SAVIT2
+ PLA  ;Knock off two excess layers
+ PLA  ;And drop thro'
+
+;Return which restores A
+SAVRTA PLA
+ TAY
+ PLA
+ TAX
+ PLA
+ RTS
+
+;Saves X and Y only
+SAVIT PHA
+ TXA
+ PHA
+ TYA
+ PHA
+ JSR SAVIT0
+
+;Keep A
+ TSX
+ STAAX &103
+ JMP SAVRTA
+
+
+
+ LNK DOS02

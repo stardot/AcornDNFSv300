@@ -1,0 +1,1166 @@
+;*** File Six *** > DOS06
+ TTL - DOS06 -  Init & Sideways interface
+ OPT &01
+BOOTLD = "L.!BOOT",CR
+
+BOOTEX = "E."
+BOOTN = "!BOOT",CR
+
+
+SINIT LDA ITEMP
+ JSR VSTRNG
+ = "Acorn DFS"
+ [ RAMVER * NOENAB=0
+ = "*"
+ ]
+ = CR,CR
+ BCC SINIT0
+
+INIT LDAIM &FF
+SINIT0 JSR WOPA  ;A=0 on return
+ PHA
+
+ LDAIM &06  ;Die previous FS
+ JSR OSFSCM
+ LDXIM &0D  ;Zap vectors @$0200
+INIT0 LDAAX VTABB
+ STAAX VTAB2
+ DEX
+ BPL INIT0
+ LDAIM BYTESV
+ JSR READBY  ;Get address 3 byte vectors
+ STY TEMP + &01
+ STX TEMP
+ LDXIM &0007  ;Zap them
+ LDYIM &1B
+INIT1 LDAAY VTABF - &1B
+ STAIY TEMP
+ INY
+ LDAAY VTABF - &1B
+ STAIY TEMP
+ INY
+ LDA ROMID
+ STAIY TEMP
+ INY
+ DEX
+ BNE INIT1
+ STX FDRIVE  ;Make safe
+ STY CATDRV
+ STY OLDDRV
+ LDXIM SWCVCL
+ JSR DOSWCL
+ JSR SUSPRI  ;Set up private ptr in TEMP
+ LDYIM COLDS
+ LDAIY TEMP  ;Cold start ??
+ BPL INITCL
+;********************* HMT
+; Shift-Break does a cold start
+ PLA ; Get auto boot flag
+ PHA
+ BEQ INITCL
+;******************** HMT
+
+;Warm start
+ LDYIM MEMFLG  ;Got memory already ?
+ LDAIY TEMP
+ BMI BOOTIT ;************ HMT
+ JSR GETMEM
+ LDYIM &00  ;Restore FCBs and VARS
+INIT2 LDAIY TEMP
+ CPYIM &C0
+ BCC INIT3
+ STAAY BUFFER
+ BCS INIT4
+INIT3 STAAY SEQMAP
+INIT4 DEY
+ BNE INIT2
+ LDAIM &A0  ;Make the seq files read new secs
+INIT6 TAY
+ PHA
+ LDAIM &3F
+ JSR CLRBIT  ;Returns C clear
+ PLA
+ STAAY SEQDAH   ;Insert rubbish
+ SBCIM &1F
+ BNE INIT6
+ BEQ BOOTIT ;************ HMT
+; PLA  ;Remove auto-boot from stack
+; RTS
+
+;Cold start
+INITCL JSR GETMEM  ;Claim your memory
+ LDAIM MASQUA  ;Set up qualifiers
+ STA DEFQUA
+ STA LIBQUA
+ LDYIM MASDSK  ;Set up disks
+ STY DEFDSK
+ STY LIBDSK
+ LDYIM &00
+ STY DCBMAP  ;No files at start
+ STY NMIFLG  ;Havent got NMI
+
+ LDYIM &FF
+ STY ENAFLG  ;Disable ENABLE
+ STY MONFLG  ;Monitor OFF
+ STY SEQSEM ; := FF
+INIT5    
+
+ ; Look for a tube at Warm start too
+ ; for the whinging swine in the 16032 grope.
+ ; Takes us up to 0.9h
+BOOTIT LDAIM BYTETB
+ JSR READBY  ;Tube ??
+ TXA
+ EORIM &FF
+ STA NOTUBE  ;Complement of tube flag
+
+
+;Check for auto boot
+ PLA  ;Auto-boot flag (MOS provided)
+ BNE NOAUTO
+ JSR DIRLDY
+
+; LDYIM $00
+; LDXIM $00
+
+ LDA DIRHIG + &06  ;What sort of A-Boot ?
+ JSR SFOUR
+ BNE ABOOT2 ; ********* HMT
+
+; PHA
+; LDXIM BOOTN
+; LDYIM BOOTN /
+; JSR STXYLP
+; JSR GETNAM
+; JSR LOOKUP
+; PLA
+; BCS ABOOT2
+; JSR VSTRNG
+; = "File not found",CR,CR,$EA
+
+NOAUTO RTS
+ABOOT2 LDYIM /(BOOTLD )
+ LDXIM BOOTLD
+ CMPIM &02
+ BCC ABOOT3
+ BEQ ARUN
+ [ BOOTEX - BOOTLD :SHR: 8=0
+ |
+ INY
+ ]
+ LDXIM BOOTEX  ;EXEC !BOOT
+ [ BOOTEX :SHL: 8=0
+ BEQ ABOOT3
+ |
+ BNE ABOOT3
+ ]
+ARUN
+ [ BOOTN - BOOTLD :SHR: 8=0
+ |
+ INY
+ ]
+ LDXIM BOOTN  ;RUN !BOOT
+ABOOT3 JMP OSCLI
+
+;Called from MOS as a sways ROM
+CALLED
+ [ RAMGO=0
+ PHA ;Check for RAM image
+ LDA RAMLOC
+ CMPIM &4C
+ BNE NORAM
+ PLA
+ JMP RAMLOC
+NORAM PLA
+ ]
+;***************************************************
+;    FRUGALITY
+; Now the mod for frugal ROMs
+ PHA
+
+ LDA FDCS
+ ANDIM &03 ; These should be 0 if there's an 8271
+ [ $emu
+ NOP
+ NOP
+ |
+ BNE FRUGAL ; If no 8271
+ ]
+
+ LDAAX PRIPTR ; Get the private ptr
+ ASLA ;using bit6 in table
+ BMI FRUGAL ; a PLA : RTS
+
+ PLA
+ ;**************************************************
+ CMPIM SWCIN1  ;1st pass memory alloc.
+ BNE SAVPRI
+
+;Power up - grab memory
+ CPYIM &17  ;I take up to page $17
+ BCS SAVSP0
+ LDYIM &17
+SAVSP0 RTS
+
+;Save private memory
+SAVPRI CMPIM SWCIN2
+ BNE PMSG
+ PHA
+ TYA
+ PHA ; Old Y on the stack
+
+ STA TEMP + &01
+
+; In storing my private pointer, I must preserve the top bit
+; as it refers to the NFS' frugalization
+ ASLA ; Remove top bit
+ ASLAX PRIPTR  ; Old Top bit -> C
+ RORA ; Insert old top bit
+ STAAX PRIPTR
+
+ LDAIM &00  ;Indicate cold start next
+ STA TEMP
+
+;***************** HMT
+; Preserve status over Soft-Break
+ LDAIM &FD ; Read reset type
+ JSR READBY
+ DEX
+; X was 0 => A = FF, X 1 => A = 0, X 2 => A = 1
+; So X=0 => Soft reset => A is MI, else A is PL
+
+ TXA
+ LDYIM COLDS  ;Cold start
+ ANDIY TEMP
+; So if it was cold it stays cold
+; If it was warm it is altered maybe
+
+ STAIY TEMP
+ PHP
+ INY ; So Y -> MEMFLG
+ PLP
+ BPL NOTGOT ; If a cold start, don't save anything
+
+ LDAIY TEMP ; Get MEMFLG, MI if we've got Memory
+ BPL NOTGOT ; If we've not got it!
+
+; We've got RAM, so save the contents
+ JSR SAVMEM
+
+NOTGOT LDAIM &00 ; So we dont have memory....
+ STAIY TEMP
+
+ [ &00=0
+ JSR INIFDC ;************* HMT
+; Very dubious doing this here!
+ ]
+
+ LDX ROMID ; Recover X ; ************* HMT
+ PLA
+ TAY
+ INY
+ INY ; 2 private pages ***** HMT
+FRUGAL PLA
+ABOOT1 RTS
+
+;From here on nothing is returned in
+; X or Y so do a SAVITA now - calls
+;that need to set A=0 use WOPA
+
+PMSG JSR SAVITA
+ CMPIM SWCIN3
+ BNE CHKCOM
+
+;Auto boot ? - Check & do if required
+ STY ITEMP
+ LDAIM BYTEKS  ;Magic number (kbd scan)
+ JSR OSBYTE
+ TXA
+ BMI ABOOT0
+ CMPIM &32  ;'D' would you believe?
+ BNE ABOOT1
+ LDAIM BYTECK  ;Cancel the D
+ JSR OSBYTE
+ABOOT0 JMP SINIT
+
+;Check for '*DISC' or '*DISK'
+CHKCOM CMPIM SWCLIN
+ BNE INIFSY
+ LDXIM INITBL - COMTAB - &03
+DHELP0 JMP WNAME0
+
+;Init filing system Y
+INIFSY CMPIM SWCIFS
+ BNE DOHELP
+ CPYIM FSYSNO
+ BNE INIFSR
+ JMP INIT
+
+;Do help
+DOHELP CMPIM SWCHLP
+ BNE RELMEM
+ LDAIY LINPTR
+ LDXIM HLPTAB - COMTAB - &03
+ CMPIM CR
+ BNE DHELP0  ;Something on command line ?
+ TYA
+ INX
+ INX
+ LDYIM HLPNO
+ JMP HELP1
+
+;Release memory
+RELMEM JSR WOPA  ;Here on A=0 if responded to
+ CMPIM SWCCME
+ BNE UNKWRD
+
+ JSR SUSPRI  ;Have I got mem anyway
+ LDYIM MEMFLG
+ LDAIY TEMP
+ BPL UNKSWA  ;De wop A
+
+ LDYIM &00
+ JSR NSRNOW  ;Write files to disk (Y=0) ;*********** HMT
+; Preserves (TEMP)
+
+ JSR SAVMEM ; Save the private store
+; Preserves (TEMP)
+
+ LDYIM MEMFLG  ;Tell me I don't have it
+ LDAIM &00
+ STAIY TEMP
+ RTS
+
+
+UNKSWA LDAIM &0A ; For RC= $0A to DeWop OK! *********** HMT
+
+;Patent de woping rountine
+UNKSWZ TSX
+ STAAX &105
+INIFSR RTS
+
+;Unknown OSWORD call
+UNKWRD CMPIM SWCWRD
+ BNE UNKSWZ
+
+ LDY WORDA
+ BMI UNKSWZ
+ CPYIM &7D
+ BCC UNKSWZ ; Reject other than my calls now
+
+ LDX WORDX  ;Copy WORDX Y into TEMP
+ STX TEMP
+ LDX WORDY
+ STX TEMP + &01
+
+ INY  ;Disk size
+ BPL GTDSKS ; If $7E or $7D
+
+; $7F  Send command to disk controller
+;
+;XY Points to
+; + $00 : Disk (if required)
+; + $01 : Address
+; + $05 : Number of params
+; + $06 : Command
+; + $07]: Parameters
+;
+;Result returned at end of params
+RWTS CLI
+; This to allow type ahead while in the OSWORD e.g. for CPM wallies
+; Its OK here as I've finished with WORDA,X and Y
+ LDYIM &00
+ LDAIY TEMP
+ BMI RWTS2  ;If top bit of disk set - skip
+ JSR DODRIV
+RWTS2 JSR DRVSEL
+ INY
+ LDXIM &02
+ JSR SHFTBO
+ LDAIY TEMP  ;Get number of pars
+ INY
+ PHA
+ LDAIY TEMP  ;Get command
+ PHA
+ JSR CMDDRV
+ PLA
+ JSR SFOUR  ;Bit 4 determines R/W on NMI
+ ANDIM &01
+ JSR CHKTUB
+ ROLA  ;Work out what to do on NMI
+ ADCIM WTFCLA
+ JSR NMICLA
+ LDA WORK + &02
+ STA RAMADR
+ LDA WORK + &03
+ STA RAMADR + &01
+ LDYIM &07
+ PLA  ;Get number of params
+ TAX
+ BEQ RWTS1
+RWTS0 LDAIY TEMP
+ JSR DSKPAR
+ INY
+ DEX
+ BNE RWTS0
+RWTS1 JSR DSKRES  ;Get result
+ STAIY TEMP
+ JMP NMTREL
+
+GTDSKS JSR SETDEF
+ JSR GETDIR
+ INY
+ BMI GETDSZ ; If it was $7E
+
+; $7D  Get cycle number
+;
+;Result returned at XY
+ LDYIM &00
+ LDA CYCNO
+ STAIY TEMP
+ RTS
+
+; $7E  Get disk size
+;
+;4 Byte result returned at XY
+GETDSZ LDAIM &00  ;No units
+ TAY
+ STAIY TEMP
+ INY
+ LDA DIRHIG + &07
+ STAIY TEMP
+ INY
+ LDA DIRHIG + &06
+ ANDIM &03
+ STAIY TEMP
+ INY
+ LDAIM &00  ;I claimed it
+ STAIY TEMP  ;High order zero too
+GTLDR0 RTS
+
+;OSFILE call
+WFILE JSR SAVIT
+ PHA
+ JSR CLRWLD
+ STX TEMP
+ STX FCBADR
+ STY TEMP + &01
+ STY FCBADR + &01
+ LDXIM &00
+ LDYIM &00
+ JSR SHFTTW
+WFILE4 JSR SHFTBO
+ CPYIM &12
+ BNE WFILE4
+ PLA
+ TAX
+ INX
+ CPXIM FILJPH - FILJPL
+ BCS WFILE3
+ LDAAX FILJPH
+ PHA
+ LDAAX FILJPL
+ PHA
+WFILE3 LDAIM &00 ; A NOP for bad commands ********** HMT
+ RTS
+
+;File handler call - check & jump out
+WFSCM CMPIM FSCHTB - FSCLTB
+ BCS WFILE3
+ STX YTEMP
+ TAX
+ LDAAX FSCHTB
+ PHA
+ LDAAX FSCLTB
+ PHA
+ TXA
+ LDX YTEMP
+WBGPBR RTS
+
+;Multiple BGET or BPUT - total fudge
+;XY points to:
+; + $00  Handle
+; + $01  Address to put to/get from
+; + $05  No bytes to do
+; + $09  Optional pointer
+;
+;A = 1  Put using pointer
+;A = 2  Put ignoring pointer
+;A = 3  Get using pointer
+;A = 4  Get ignoring pointer
+;A = 5  Read drive,title,cyc,opt
+;A = 6  Read dir
+;A = 7  Read lib
+;A = 8  Read file names
+WBGPB CMPIM WGPTBH - WGPTBL
+ BCS WBGPBR
+ JSR SAVITA
+ JSR WOPA  ;Zero A on return
+ STX BTEMP
+ STY BTEMP + &01
+ TAY
+ JSR WBREST
+ PHP
+ JSR RELTUB
+ PLP
+ RTS
+
+WBREST LDAAY WGPTBL
+ STA QTEMP
+ LDAAY WGPTBH
+ STA QTEMP + &01
+ LDAAY WBRWTB
+ LSRA
+ PHP
+ LSRA
+ PHP  ;Pointer flag in C
+ STA CTEMP
+ JSR MAKATP
+ LDYIM &0C  ;Move into work
+WBGPB0 LDAIY ATEMP
+ STAAY DOSRAM
+ DEY
+ BPL WBGPB0
+ LDA DOSRAM + &03
+ AND DOSRAM + &04
+ ORA NOTUBE
+ CLC
+ ADCIM &01
+ BEQ WBGPBA
+ ; Now claim the tube so it works with the net
+ JSR CLATUB
+ CLC ; Carry must be clear
+
+ LDAIM &FF
+WBGPBA STA TUMFLG
+ LDA CTEMP
+ BCS WBGPB9
+ LDXIM DOSRAM + &01
+ LDYIM /(DOSRAM + &01 )
+ JSR TUBADR
+WBGPB9 PLP
+ BCS WBGPBB
+ PLP
+QJMI JMI QTEMP  ;Indirect jump @QTEMP
+WBGPBB LDXIM &03
+WBGPB8 LDAAX DOSRAM + &09
+ STAAX VTEMP
+ DEX
+ BPL WBGPB8
+ LDXIM VTEMP
+ LDY DOSRAM
+ LDAIM &00
+ PLP
+ BCS WBGPB1
+ JSR VSTAR  ;Set pointer
+WBGPB1 JSR VRADR  ;Read pointer
+ LDXIM &03
+WBGPB7 LDAAX VTEMP
+ STAAX DOSRAM + &09
+ DEX
+ BPL WBGPB7
+WCBAT0 JSR COMWRK
+ BMI WBGPB4
+WBGPB3 LDY DOSRAM
+ JSR QJMI
+ BCS WBGPB6
+ LDXIM &09  ;Increment pointer
+ JSR ZERINC
+WBGPB4 LDXIM &05  ;Increment counter
+ JSR ZERINC
+ BNE WBGPB3
+ CLC  ;Legal exit - clear C
+WBGPB6 PHP
+ JSR COMWRK  ;Make sense of counter
+ LDXIM &05
+ JSR ZERINC
+ LDYIM &0C  ;Move back
+ JSR MAKATP
+WBGPB5 LDAAY DOSRAM
+ STAIY ATEMP
+ DEY
+ BPL WBGPB5
+ PLP
+ RTS
+
+;Read catalogue entries
+; + $00 Cycle number
+; + $01 Address
+; + $05 Number to move
+; + $09 Last handle (00 to start)
+;
+;Returns
+; <length of filename> <filename>
+
+WCBAT JSR SETDEF  ;Read directory
+ JSR DIRLD
+ LDAIM WCBATR  ;Set up loop vector
+ STA QTEMP
+ LDAIM /(WCBATR )
+ STA QTEMP + &01
+ BNE WCBAT0
+
+WCBATR LDY DOSRAM + &09  ;Get previous number
+WCBAT4 CPY DIRLEN  ;End of cat ?
+ BCS WCBAT2
+ LDAAY MODIFY  ;Check qual same
+ JSR CAPS
+ EOR QUALIF
+ BCS WCBAT5
+ ANDIM &DF
+WCBAT5 ANDIM &7F
+ BEQ WCBAT3
+ JSR STEP  ;Get next
+ BNE WCBAT4
+WCBAT3 LDAIM &07  ;Filename seven long
+ JSR WBWRIT
+ STA TEMP  ;Copy filename
+WCBAT1 LDAAY CATLOW
+ JSR WBWRIT
+ INY
+ DEC TEMP
+ BNE WCBAT1
+ CLC  ;DOSRAM + $09 will be INCed auto
+WCBAT2 STY DOSRAM + &09
+ LDA CYCNO  ;Store cycle number
+ STA DOSRAM
+ RTS
+
+
+;Read title,option,drive
+;Returns:-
+; <title length> <title>
+; <option (bin)>
+; <drive (bin)>
+RDTCO JSR SETDEF
+ JSR DIRLD
+ LDAIM &0C  ;Length of title
+ JSR WBWRIT
+ LDYIM &00  ;Write title
+RDTC0 CPYIM &08 ;********** HMT
+ BCS RDTC1
+
+ LDAAY DIRLOW
+ BCC RDTC2
+
+RDTC1 LDAAY DIRHIG - &08
+RDTC2 JSR WBWRIT
+ INY
+ CPYIM &0C  ;Stop before cycle number
+ BNE RDTC0
+
+ LDA DIRHIG + &06  ;Option
+ JSR SFOUR
+ JSR WBWRIT
+ LDA FDRIVE
+ JMP WBWRIT
+
+;Read directory
+;<length disk> <disk>
+;<length directory> <directory>
+RDBIR JSR WOWRIT
+ LDA DEFDSK
+ ORAIM "0"
+ JSR WBWRIT
+ JSR WOWRIT
+ LDA DEFQUA
+ BNE WBWRIT ;********** HMT
+
+;Read library
+;<length disk> <disk>
+;<length directory> <directory>
+RLBIB JSR WOWRIT
+ LDA LIBDSK
+ ORAIM "0"
+ JSR WBWRIT
+ JSR WOWRIT
+ LDA LIBQUA
+ BNE WBWRIT ;********** HMT
+
+ADRLD PHA
+ LDA DOSRAM + &01
+ STA ZTEMP
+ LDA DOSRAM + &02
+ STA ZTEMP + &01
+ LDXIM &00
+ PLA
+ RTS
+
+ADRINC JSR SAVITA
+ LDXIM &01
+
+;Increment 4 bytes of WORK
+ZERINC LDYIM &04
+ZERIN0 INCAX DOSRAM
+ BNE ZERIN1
+ INX
+ DEY
+ BNE ZERIN0
+ZERIN1 RTS
+
+;Complement count
+COMWRK LDXIM &03
+WBGPB2 LDAIM &FF
+ EORAX DOSRAM + &05
+ STAAX DOSRAM + &05
+ DEX
+ BPL WBGPB2
+ RTS
+
+;Resusitate ATEMP from BTEMP
+MAKATP LDA BTEMP
+ STA ATEMP
+ LDA BTEMP + &01
+ STA ATEMP + &01
+WBGTR0 RTS
+
+;Put out a 1
+WOWRIT LDAIM &01
+ BNE WBWRIT
+
+;Get byte for BGBP
+WBGTR JSR WBGET
+ BCS WBGTR0
+
+WBWRIT BIT TUMFLG
+ BPL WBWRI0
+ STA TUBE
+ BMI ADRINC ; Always
+WBWRI0 JSR ADRLD
+ STAIX ZTEMP
+ JMP ADRINC
+
+;Put byte for BGBP
+WBPTR JSR WBREAD
+ JSR WBPUT
+ CLC
+ RTS
+
+WBREAD BIT TUMFLG
+ BPL WBREA0
+ LDA TUBE
+ JMP ADRINC
+WBREA0 JSR ADRLD
+ LDAIX ZTEMP
+ JMP ADRINC
+
+;It comes here every * command - used
+;for making ENABLE disabled
+ [ NOENAB=0
+WSTUS
+WSTUS0
+ |
+WSTUS BIT ENAFLG
+ BMI WSTUS0
+ DEC ENAFLG
+WSTUS0
+ ]
+;Enable use of wild characters by
+;storing the character to be used in
+;WILDCH
+;Disable use of wild characters
+CLRWLD LDAIM &FF
+ STA DASHOP
+SETWL0 STA WILDCH
+ RTS
+
+SETWLD LDAIM MASDSH
+ STA DASHOP
+ LDAIM MASWLD
+ BNE SETWL0
+
+;Read catalog info
+FRDCAT JSR TRYFIL
+ JSR CHUKBK
+ LDAIM &01
+ RTS
+
+;Delete file
+FDEFIL JSR TRYFLC
+ JSR CHUKBK
+ JSR DELFIL
+ BCC DORT1A
+
+;Write all cat info to disk
+FWRCAT JSR TRYFIL
+ JSR MVILOD
+ JSR MVIEXE
+ BVC DORT1B ; Always
+
+;Write load address to disk
+FWRLOD JSR TRYFIL
+ JSR MVILOD
+ BVC DORT1A ; Always
+
+;Write execution address to disk
+FWREXE JSR TRYFIL
+ JSR MVIEXE
+ BVC DORT1A ; Always
+
+;Write attributes to disk
+FWRATT JSR TRYFIL
+ JSR CHKOPN
+DORT1B JSR MVIATT
+DORT1A JSR TITEND
+ LDAIM &01
+ RTS
+
+;Insert load address in directory
+MVILOD JSR SAVITA
+ LDYIM &02
+ LDAIY TEMP
+ STAAX CATHIG
+ INY
+ LDAIY TEMP
+ STAAX CATHIG + &01
+ INY
+ LDAIY TEMP
+ ASLA
+ ASLA
+ EORAX CATHIG + &06
+ ANDIM &0C
+ BPL MVIIN0
+
+;Insert execution address
+MVIEXE JSR SAVITA
+ LDYIM &06
+ LDAIY TEMP
+ STAAX CATHIG + &02
+ INY
+ LDAIY TEMP
+ STAAX CATHIG + &03
+ INY
+ LDAIY TEMP
+ RORA
+ RORA
+ RORA
+ EORAX CATHIG + &06
+ ANDIM &C0
+MVIIN0 EORAX CATHIG + &06
+ STAAX CATHIG + &06
+ CLV
+ RTS
+
+;Insert attributes into directory
+MVIATT JSR SAVITA
+ LDYIM &0E
+ LDAIY TEMP
+ ANDIM &0A
+ BEQ MVIAT0
+ LDAIM &80
+MVIAT0 EORAX CATLOW + &07
+ ANDIM &80
+ EORAX CATLOW + &07
+ STAAX CATLOW + &07
+ RTS
+
+;Try and get file and check for file
+;open or locked.
+TRYFLC JSR TRYFL1
+ BCC TRYFL2
+
+;Check if locked
+CHKLOK LDAAY MODIFY
+ BPL CHKOPR
+
+DELPRT JSR ESTRNG
+ = LOKNUM,"Locked",&00
+
+;Check for open or locked
+CHKOPL JSR CHKLOK
+
+;Check file open and scream if so.
+CHKOPN JSR SAVITA
+ JSR CMPFIL
+ BCC TRYFL3
+ JMP FILOPN
+
+;Try and get file if fail take of this
+; return and return to level below.
+TRYFIL JSR TRYFL1
+ BCS TRYFL3
+TRYFL2 PLA
+ PLA
+ LDAIM &00
+CHKOPR RTS
+
+TRYFL1 JSR FRMNAM
+ JSR LOOKUP
+ BCC TRYFL3
+ TYA
+ TAX
+TRYFL0 LDA FCBADR
+ STA TEMP
+ LDA FCBADR + &01
+ STA TEMP + &01
+TRYFL3 RTS
+
+;Get low mem address and length of free
+; memory.
+GETLSZ LDAIM BYTEPA
+ JSR OSBYTE
+ STY FRPAGE
+ [ RAMVER=0
+ LDXIM RAMLOC
+ LDYIM /(RAMLOC )
+ |
+ LDAIM BYTETM
+ JSR OSBYTE
+ ]
+ TYA
+ SEC
+ SBC FRPAGE
+ STA FRSIZE
+ RTS
+
+
+;Get memory for DOS
+GETMEM LDXIM SWCCME  ;Claim memory
+ JSR DOSWCL
+ JSR SUSPRI  ;Tell me I've done it
+
+ LDYIM COLDS
+ LDAIM &FF  ;Indicate warm start up
+ STAIY TEMP ; warmed **** HMT
+ STA COLDS
+
+ INY ; So Y -> MEMFLG
+ STAIY TEMP
+ RTS
+
+;Get private area
+SUSPRI PHA
+ LDX ROMID
+ LDAIM &00
+ STA TEMP
+ LDAAX PRIPTR
+ ANDIM &3F ; Use only the non-frugal bits
+ STA TEMP + &01
+ PLA
+ RTS
+
+;Claim NMI
+NMICLA JSR SAVITA
+ PHA
+ BIT NMIFLG  ;Already got ?
+ BMI NMICL0
+ LDAIM BYTESC
+ LDXIM SWCCNM
+ JSR READIT
+ STY PRENMI  ;Save for handing back
+ LDAIM &FF  ;Set NMI flag
+ STA NMIFLG
+
+; Now ensure that a RESET in the middle doesn't fuck things up!
+ INC COLDS ; <- 0, for a cold start
+
+NMICL0 PLA
+ TAX
+ LDAAX NMITBL
+ STA ZTEMP
+ LDAAX NMITBH
+ STA ZTEMP + &01
+ LDYAX NMIROL  ;Get length
+NMICL1 LDAIY ZTEMP  ;Move routine
+ STAAY INTNMI
+ DEY
+ BPL NMICL1
+ CPXIM &02
+ BCS NMICL2
+ LDA ROMID  ;Store romID into LDAIM
+ STA MYID - RDMNMI + INTNMI + &01
+ CPXIM &00  ;Write ?
+ BNE NMICL2
+ LDYIM RDMNMI - WRIOVR - &01  ;Put write overlay on
+NMICL3 LDAAY WRIOVR
+ STAAY NMIOVR - RDMNMI + INTNMI
+ DEY
+ BPL NMICL3
+NMICL2 RTS
+
+;Check disk finished and when done
+;release NMIs
+DSKFIN JSR DSKWAI
+
+;Release NMI
+NMIREL JSR SAVITA
+ BIT NMIFLG  ;Do I have it?
+ BPL NMIRL0
+ ;*********** is this neccessary? HMT   JSR SAVITA
+
+ DEC COLDS ; <- $FF for a worm start
+
+ LDY PRENMI  ;Did anybody have it?
+ CPYIM &FF
+ BEQ NMIRL0  ;Ignore if not
+ LDXIM SWCRNM  ;Hand it back
+ JSR DOSWCL
+NMIRL0 LDAIM &00
+ STA NMIFLG
+ RTS
+
+;Clear keyboard buffer
+CLRKEY JSR SAVITA
+ LDAIM BYTECB
+ LDXIM &01
+WRITBY LDYIM &00
+ BEQ BYTJMP
+
+;Zero spool handle
+;***ZERSPH LDAIM BYTESH ;*** HMT
+;*** LDXIM $00
+;*** BEQ WRITBY
+
+;Set where OSWRCH goes
+WRIWDE TAX
+WRIWDX LDAIM BYTESD
+ BNE BYTJMP
+
+;Acknowledge escape
+ACKESC JSR SAVITA  ;Keep registers
+ LDAIM BYTEAE
+ BNE BYTJMP
+
+;Do sideways call
+DOSWCL LDAIM BYTESC
+ BNE BYTJMP
+
+;Read switches
+READSW LDAIM BYTESW
+READBY LDXIM &00
+READIT LDYIM &FF
+BYTJMP JMP OSBYTE
+
+;Jump table to put into indirection
+;vectors
+VTABB = &1B
+ = &FF
+ = &1E
+ = &FF
+ = &21
+ = &FF
+ = &24
+ = &FF
+ = &27
+ = &FF
+ = &2A
+ = &FF
+ = &2D
+ = &FF
+
+;Indirection table for use by sideways
+;handler
+VTABF = WFILE
+ = /(WFILE )
+ = &00
+ = WARGS
+ = /(WARGS )
+ = &00
+ = WBGET
+ = /(WBGET )
+ = &00
+ = WBPUT
+ = /(WBPUT )
+ = &00
+ = WBGPB
+ = /(WBGPB )
+ = &00
+ = WFIND
+ = /(WFIND )
+ = &00
+ = WFSCM
+ = /(WFSCM )
+ = &00
+
+;Jump out table for file handler call
+FSCLTB = WFOPT - &01
+ = WFEOF - &01
+ = WNOTA - &01
+ = WNAME - &01
+ = WNOTA - &01
+ = WDCAT - &01
+ = WFDIE - &01
+ = WHLIM - &01
+ = WSTUS - &01
+FSCHTB = /(WFOPT - &01 )
+ = /(WFEOF - &01 )
+ = /(WNOTA - &01 )
+ = /(WNAME - &01 )
+ = /(WNOTA - &01 )
+ = /(WDCAT - &01 )
+ = /(WFDIE - &01 )
+ = /(WHLIM - &01 )
+ = /(WSTUS - &01 )
+
+FILJPL = LOADER - &01
+ = SAVER - &01
+ = FWRCAT - &01
+ = FWRLOD - &01
+ = FWREXE - &01
+ = FWRATT - &01
+ = FRDCAT - &01
+ = FDEFIL - &01
+FILJPH = /(LOADER - &01 )
+ = /(SAVER - &01 )
+ = /(FWRCAT - &01 )
+ = /(FWRLOD - &01 )
+ = /(FWREXE - &01 )
+ = /(FWRATT - &01 )
+ = /(FRDCAT - &01 )
+ = /(FDEFIL - &01 )
+
+NMITBL = RDMNMI
+ = RDMNMI
+ = NOPNMI
+ = WTFNMI
+ = WMFNMI
+ = RTFNMI
+ = RMFNMI
+NMITBH = /(RDMNMI )
+ = /(RDMNMI )
+ = /(NOPNMI )
+ = /(WTFNMI )
+ = /(WMFNMI )
+ = /(RTFNMI )
+ = /(RMFNMI )
+NMIROL = RMFNMI - RDMNMI - &01
+ = RMFNMI - RDMNMI - &01
+ = &00
+ = NMIEND - WTFNMI - &01
+ = RTFNMI - WMFNMI - &01
+ = WTFNMI - RTFNMI - &01
+ = WMFNMI - RMFNMI - &01
+
+;In WBRWTB
+; bit 0 = use pointer ? 0=Y,1=N
+; bit 1 = read pointer ? 0=N,1=Y
+; bit 2 = read(1),write(0)
+WGPTBL = RETURN
+ = WBPTR
+ = WBPTR
+ = WBGTR
+ = WBGTR
+ = RDTCO
+ = RDBIR
+ = RLBIB
+ = WCBAT
+WGPTBH = /(RETURN )
+ = /(WBPTR )
+ = /(WBPTR )
+ = /(WBGTR )
+ = /(WBGTR )
+ = /(RDTCO )
+ = /(RDBIR )
+ = /(RLBIB )
+ = /(WCBAT )
+WBRWTB = &04
+ = &02
+ = &03
+ = &06
+ = &07
+ = &04
+ = &04
+ = &04
+ = &04
+
+ LNK DOS07

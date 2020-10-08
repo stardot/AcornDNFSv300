@@ -1,0 +1,506 @@
+
+; NFS08
+ TTL MOS interface
+ OPT MOS
+
+;[*****************************]
+;[    Net dedicated 0-page     ]
+;[ $9C,$9D - first page, Always]
+;[  $9E,$9F - used by remote   ]
+;[*****************************]
+
+
+; This section of the implementation concerns the
+; interface of the ECONET (sic) with the MOS.
+; This allows operations to be carried out as
+; function calls and not by direct manipulation
+; of the Net routines.
+
+; The interface is defined in terms of OSbyte and
+; OSword calls to handle the control blocks.
+; The area of RAM allocated is in the second static
+; workspace page.
+
+; Calls are passed to the interface as follows:
+; A=7 : OSBYTE, Y= call number, X= ROM number
+; A=8 : OSWORD, Y= call number, X= ROM number
+; In both cases, &F0,F1 hold the original values
+; for X, Y.
+
+; As these routines are called from within OSBYTE,
+; OSWORD then MOS workspace can be claimed, provided
+; that it is restored afterwards.
+
+
+ TTL Static Workarea allocation
+ OPT &01
+
+;      PAGE 1
+;            |----------------------|
+;            |        (128)         |
+; 128        |    JSR BUFFER        |
+;            |----------------------|
+;            |        (1)           |
+; 127        |    BUFFER COUNTER    |
+;            |----------------------|
+;            |        (16)          |
+; 111        |   Txcb/Imm. Op       |
+;            |----------------------|
+;            |        (80)          |
+;  31        |    Printer Buffer    |
+;            |----------------------|
+;            |        ( 9)          |
+;  22        |    High level State  |
+;            |----------------------|
+;            |        (16)          |
+;   6        |    Low level State   |
+;            |----------------------|
+;            |        (2)           |
+;   4        |   Counters & flags   |
+;            |----------------------|
+;            |        (4)           |
+;   0        |    byte/word save    |
+;            |----------------------|
+
+
+;      Static Page 2
+;             -----------------------
+;   0         |   Printer CB        |
+;             ----------------------
+;  12         |   Remote CB         |
+;             -----------------------
+;             ~     16 Rxcb's       ~
+;             -----------------------
+; 217         |      Zero           |
+;             -----------------------
+; 218         |   Printer work      |
+;             -----------------------
+; ???         |   Remote work       |
+;             -----------------------
+
+ TTL OSBYTE calls
+ OPT &01
+OFFSEX LDA &F0 ;get the original parameter
+OFFSET ASLA ;passed A as Rxcb number
+ ASLA
+ PHA ;A *:= 4
+ ASLA ;nb carry=0
+ TSX
+ ADCAX &0101 ;with previous result
+ TAY ;Y = A * 12
+ PLA ;A = A * 4
+ CMPIM RXCBS * &04 ;test the returned offset
+ BCC OFF1
+ LDYIM &00
+ TYA ;return error
+OFF1 RTS ;X = undefined
+
+TXPOLL  ;call to poll a Txcb
+ LDYIM UTXCB ;offset of user TXCB in first page
+ LDAIY PAGE1 ;dedicated pointer in 0-page
+ BCC RXPOL1 ;return value
+
+RXPOLL  ;call to poll Rxcb given in $F0
+ JSR OFFSEX ;calculate the offset from pointer
+ BCS RXPOL2 ;error condition
+ LDAIY WORKP1 ;get the flag byte
+ CMPIM &3F ;check CB valid
+ BNE RXPOL1
+RXPOL2 LDAIM &00
+RXPOL1 STA PARMX ;return value in X
+ RTS
+
+DELCB
+ JSR OFFSEX
+ BCS RXPOL2
+; ROR LFLAG ;disable USER Rx
+ LDAIM &3F ;delete flag byte
+ STAIY WORKP1 
+
+; ROL LFLAG ;enable Rx and return
+ RTS
+
+
+;This code has been moved to ROM file
+;7/3/83
+
+;ROFFF JSR NROFF
+; BVC CLAIM
+
+ TTL OSWORD calls
+ OPT &01
+
+FSWORD LDA PARMA ;get call number
+ SBCIM &0F ;test bounds - C=0 on entry
+ BMI NOWORD
+ CMPIM &05
+ BCS NOWORD
+
+ JSR GOWORD ;call the routine
+
+CLAIMW LDYIM SAVEAR +&02 ;restore previous values
+REST1 LDAIY PAGE1
+ STAAY UTIL3 - SAVEAR -&01
+ DEY
+ BPL REST1
+ RTS
+
+GOWORD TAX
+ LDAAX WORDHI
+ PHA
+ LDAAX WORDLO
+ PHA
+
+ LDYIM SAVEAR +&02 ;offset in first static page
+SAVE1 LDAAY UTIL3 - SAVEAR -&01  ;claim 0-page
+ STAIY PAGE1 ;dedicated pointer
+ DEY
+ BPL SAVE1
+ INY ;Y=0
+ LDAIY PARMX ;call routine with parameter
+ STY ROMA ;claim the call here
+NOWORD RTS
+
+; Table of OSWORD calls
+;&70 :    Call TRANSMIT
+;&71 : 0  Open Rxcb
+;    : n  Read Rxcb(n)
+;&72 :    Read Routine arguments
+;&73 : 0  Read File Server Id
+;    : 1  Set File Server Id
+;    : 2  Read Printer Server Id
+;    : 3  Set Printer Server Id
+;    : 4  Read protection masks
+;    : 5  Set protection masks
+;    : 6  Read context handles
+;    : 7  Set context handles
+;    : 8  Read local station number
+;    : 9  Read Routine arguments buffer size
+;&74 :    DOFSOP type call
+
+
+WORDLO = CALLTX-&01
+ = OPENRX-&01
+ = READRA-&01
+ = RS-&01
+ = DOFS -&01
+
+WORDHI = /(CALLTX -&01 )
+ = /(OPENRX -&01 )
+ = /(READRA -&01 )
+ = /(RS -&01 )
+ = /(DOFS -&01 )
+
+CALLTX  ;initiate Tx, $F0,$F1 point at TXCB
+
+; check Tx not already in progress
+
+ ASL TXCLR
+ TYA ;return error in block
+ BCC READRY ;skip Tx if sema claimed
+
+;claim work area
+
+ LDA PAGE1 +&01 ;get pointer
+ STA UTIL3 +&01
+ STA LTXCBP +&01 ;copy direct into the pointer
+ LDAIM UTXCB
+ STA UTIL3
+ STA LTXCBP
+
+ LDXIM &0F ;copy 16 bytes, maybe immediate operation
+ JSR COPY2 ;copy the data across
+ JMP BRIANX ;call Brian
+
+READRA  ;read the JSR arguments
+ LDA PAGE1 +&01
+ STA UTIL3 +&01
+ LDYIM JSRSIZ
+ LDAIY PAGE1 ;get the size of the buffer
+ INY
+ STY UTIL3
+ TAX
+ DEX
+ LDYIM ZERO
+ JSR COPY2 ;carry clear on entry
+ JMP CLRJSR ;reset the old LSTAT byte
+
+READRB  ;read the args size and the buffer size
+ LDYIM JSRSIZ
+ LDAIY PAGE1 ;get the args size
+ LDYIM ONE
+ STAIY &F0
+ INY
+ LDAIM &80 ;buffer size
+READRY STAIY &F0
+READRX RTS ;return store
+
+LOWP = FSLOCN -&01
+ = PSLOCN - &01
+
+RS  ;call to read|set state information
+ CMPIM &06
+ BCS RSL1
+ CMPIM &04
+ BCS RSSL1 ;status byte read|set
+ LSRA ;get data direction flow
+ LDXIM /(FSLOCN - &01 )
+ TAY
+ BEQ RSL3
+RSL4 LDX WORKP1 +&01
+RSL3 STX UTIL3 +&01
+ LDAAY LOWP
+ STA UTIL3 ;set up copy pointr
+ LDXIM &01
+ LDYIM &01
+
+COPY2 BCC COPYL2
+COPYL1 LDAIY &F0
+ STAIY UTIL3
+; BCS COPYL3
+COPYL2 LDAIY UTIL3
+ STAIY &F0
+COPYL3 INY
+ DEX
+ BPL COPY2 ;count via X
+ RTS ;goto exit routine
+
+RSSL1 LSRA
+ INY
+ LDAIY PARMX ;get the data parameter
+ BCS RSSL2 ;skip if SET operation
+ LDA LSTAT
+ STAIY PARMX ;else READ the flags
+RSSL2 STA LSTAT
+ STA OLDJSR ;ammend old copy just in case
+RSL3X RTS
+
+RSL8 LDYIM SAVEHI - 1
+ LDAIY PAGE1
+ LDYIM &01
+ STAIY PARMX ;return @ XY+1
+ RTS
+
+RSL1 CMPIM &08
+ BEQ RSL8
+ CMPIM &09
+ BEQ READRB ;return buffersize and argssize for JSR
+ BPL RSL10 ;error handler
+;must be read|set context handles
+ LDYIM THREE
+ LSRA ;carry will determine which operation
+ BCC READC1
+ STY ROMY
+SETC1 LDY ROMY
+ LDAIY PARMX
+ JSR Y2FSA
+ TYA
+ LDY ROMY
+ STAAY URD -&01;changed format
+ DEC ROMY
+ BNE SETC1
+ RTS
+
+RSL10 INY
+ LDA ERROR ;last error found
+ STAIY PARMX
+ RTS
+
+READC1 LDAAY URD -&01
+ JSR FS2A
+ STAIY PARMX
+ DEY
+ BNE READC1
+ RTS
+
+OPENRX
+ ;call to OPEN or READ an Rxcb
+;If the call is for READ then the first
+;byte of the CB contains the number of the
+;block to be read. Otherwise the byte is zero.
+
+;If the CB is already deleted then ZERO
+;is returned in this byte.
+
+;If the call is to OPEN then the CB number
+;is returned here; if no CB's are free then
+;ZERO is returned.
+
+
+SETPP LDX WORKP1 +&01 ;static pointer
+ STX UTIL3 +&01
+ STY UTIL3
+ ROR LFLAG ;System is off, so ROR turns off USER too
+ LDAIY PARMX ;get the CB flag
+ STA UTIL3 -&01
+ BNE OPENL1 ;skip if call is to READ
+
+ LDAIM &03 ;blocks 0,1,2 dedicated
+;assumes pointer to RXCBV is set up
+SCAN0 JSR OFFSET ;returns Y=A*12
+ BCS OPENL4
+ LSRA
+ LSRA
+ TAX ;save index
+ LDAIY UTIL3 ;get flag byte
+ BEQ OPENL4 ;0 terminator
+ CMPIM &3F
+ BEQ SCAN1
+ INX
+ TXA
+ BNE SCAN0
+SCAN1 TXA ;A returns number of RXCB
+;Y=offset of first free
+;else Y=0 if all full
+ LDXIM ZERO
+ STAIX PARMX ;returns the CB number
+
+OPENL1 JSR OFFSET
+ BCS OPENL4 ;skip if block number too big
+ DEY
+ STY UTIL3 ;adjust pointer to allow space for RESBYT
+
+
+ LDAIM &C0
+ LDYIM &01
+ LDXIM &0B
+
+ CPY UTIL3 -&01 ;[C=1 for OPEN]
+ ADCIY UTIL3 ;[ V=(READ|1|0)]
+ BEQ OPENL6 ;[Z=1 if OPEN CB]
+ BMI OPENL7 ;skip if OPEN
+OPENL8 CLC
+OPENL6 JSR COPY2
+
+ BCS OPENL5 ;skip if OPENing CB
+ LDAIM &3F
+ LDYIM &01
+ STAIY UTIL3 ;delete the CB if READing
+ BNE OPENL5
+
+OPENL7 ADCIM ONE ;[C=0, A=&FF on error]
+ BNE OPENL8 ;else READ anyway
+ DEY
+OPENL4 STAIY PARMX ;return ZERO, error here
+
+OPENL5 ROL LFLAG ;restore flag byte
+ RTS
+
+SETPPP  ;C=1 on entry
+ LDYIM UFSCB + LPTR
+ LDA PARMX
+ ADCIM ONE
+ JSR SETPP1
+ LDYIM ONE
+ LDAIY PARMX ;add the size
+ LDYIM UFSCB + HPTR
+ ADC PARMX ;add on base address
+SETPP1 STAIY WORKP1
+ INY
+ LDA PARMY
+ ADCIM ZERO
+ STAIY WORKP1
+ RTS
+
+DOFS CMPIM ONE
+ BCS SENDST
+ LDYIM UFSCB +&0B
+DOFS01 LDAAY TXTAB - UFSCB
+ BNE DOFS04
+ LDAAY FSLOCN - UFSCB-&02 ;fill in destination
+DOFS04 STAIY WORKP1 ;set up control block number 2
+ DEY
+ CPYIM UFSCB -&01
+ BNE DOFS01
+ INY
+ STY TXCBP ;need this later
+
+ JSR SETPPP
+
+;**** control block now set up ****
+
+ LDYIM TWO
+ LDAIM PREPLY
+ STA ESCAP ;** 9/12/83 **
+ STAIY PARMX ;reply port
+ INY
+ INY
+DOFS02 LDAAY URD - &04 ;Y=4 on entry
+ STAIY PARMX ;fill in the handles
+ INY
+ CPYIM &07
+ BNE DOFS02 ;copy handles as well
+
+ LDA WORKP1 +&01;pointer to page
+ STA TXCBP +&01 ;should be around $10,$11
+ CLI
+ JSR XMITFS ;send the data
+
+ LDYIM UFSCB +&08
+ LDAIM FILLER
+ STAIY WORKP1
+ INY
+ STAIY WORKP1 ;arbitrary top bound on the buffer
+
+ LDYIM UFSCB +&01
+ LDAIM PREPLY
+ STAIY WORKP1
+ DEY
+ LDAIM RXRDY
+ STAIY WORKP1
+ JMP WAITFS ;poll the control block
+
+ ;return, all done when data returned
+
+SENDST  ;routine to send a string to a remote m/c
+ ;and put it into the command buffer, to allow poking
+ ;of BASIC programs etc.
+
+ PHP ;save Zflag
+ LDYIM ONE ;index byte is one
+ LDAIY PARMX ;get destination 
+ TAX
+ INY
+ LDAIY PARMX ;and NET number
+
+ INY
+ STY UTIL3 ;saved area, string index
+
+ LDYIM UTXCB +&03
+ STAIY PAGE1
+ DEY
+ TXA ;old value
+ STAIY PAGE1 ;all done
+ PLP
+ BNE DOFS2
+
+SENDS1 LDY UTIL3
+ INC UTIL3
+ LDAIY PARMX
+ BEQ SENDS2 ;look for zero byte
+ LDYIM UTXCB +&0E ;buffer for char
+ STAIY PAGE1 ;move string to buffer char by char
+ PHA ;save this 
+ JSR CBSET ;JSR this char across to remote m/c
+ [ &FF=0
+ CLI
+ JSR XMIT ;send the data
+ |
+ JSR DOFSXM
+ ]
+SENDXX DEX
+ BNE SENDXX ;slight delay loop
+ PLA
+ EORIM CR ;look for CR
+ BNE SENDS1 ;loop until done [ <256 chars ]
+SENDS2 RTS
+
+DOFS2 JSR CBSET ;set up the CB
+ LDYIM UTXCB +&0C
+ LDAIY PAGE1 ;ammend proc call
+ ADCIM &03 ;C=0 here
+ STAIY PAGE1 ;number = 3
+DOFSXM CLI
+ JMP XMITFS
+
+ LNK NFS09

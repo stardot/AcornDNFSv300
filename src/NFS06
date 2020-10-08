@@ -1,0 +1,156 @@
+
+; NFS06
+ OPT PATCH
+
+; This code is an add-on to allow the full MOS spec
+; to be reached. The messy interface tacked onto
+; OSBGPB is herein dealt with.
+
+INFO5  ;return disc type info
+ LDYIM FCUSER
+ JSR DOFSOP
+ LDA OPT
+ STA RXBUF + &11 ;position 18 in the buffer
+ STX WORK ;start position in the buffer
+ STX WORK +&01
+ LDAIM &12
+ STA WORK +&02 ;counter for data
+INFO5X BNE INFOT1
+
+OSINFO LDYIM FOUR ;check TUBE addresses
+ LDA TBFLAG
+ BEQ INFOX
+ CMPIY TEMPX
+ BNE INFOX
+ DEY
+ SBCIY TEMPX
+;TBFLAG=0 for no tube present
+INFOX STA ROMA ;save this for later use
+;ROMA=0 for no tube, <> 0 for TUBE
+
+INFO2 LDAIY TEMPX ;set up POINTR anyway
+ STAAY POINTR -&01
+ DEY
+ BNE INFO2 ;set up POINTR
+
+ PLA
+ ANDIM &03 ;low two bits only
+ BEQ INFO5 ;A was #0100
+ LSRA
+ BEQ INFO6 ;A was #0101 here
+ BCS INFO8 ;A was #0111 here
+  ;A was #0110 here
+INFO6 TAY ;A=0 or A=1
+ LDAAY CSD
+INFOC STA HDRCSD
+ LDA LIB
+ STA HDRLIB
+ LDA URD
+ STA HDRURD
+ LDXIM FCREAD ;must set function code as well
+ STX HDRFN ;note carry should be clear
+ LDAIM CR
+ STA RXBUF +&01 ;send null filename
+ STA WORK +&02 ;counter
+ LSRA ;#1101 => #0110 !!
+ STA RXBUF ;arg to examine function
+ CLC
+
+ JSR DOFS0 ;entry point which does not touch handles
+
+ STX WORK +&01
+ INX
+ STX WORK
+INFOT1 LDA ROMA ;test data area
+;over the TUBE here
+ BNE TBCOPY
+
+ LDX WORK
+ LDY WORK +&01
+INFOH1 LDAAX RXBUF
+ STAIY POINTR
+ INX
+ INY
+ DEC WORK +&02
+ BNE INFOH1
+ BEQ TBEXIT ;copy data to the HOST
+
+TBCOPY
+ JSR TCLAIM ;claim the TUBE
+ LDAIM ONE
+ LDX TEMPX
+ LDY TEMPY
+ INX
+ BNE TBL1
+ INY
+TBL1 JSR TBINIT ;&0406
+ LDX WORK
+TBCOP1 LDAAX RXBUF
+ STA REG3 ;&FEE5
+ INX
+
+ LDYIM  6
+DELAY DEY ;** lousy 16032 **
+ BNE DELAY
+
+ DEC WORK +&02
+ BNE TBCOP1
+ LDAIM TCSEMA
+ JSR TBINIT ;release the TUBE
+TBEXIT JMP FINDEX ;copy data over the TUBE
+
+INFO8 LDYIM &09
+ LDAIY TEMPX
+ STA TXBUF +&01 ;entry point to EXAMINE
+ LDYIM &05
+ LDAIY TEMPX
+ STA TXBUF +&02 ;entries to examine in call
+ LDXIM CR
+ STX TXBUF +&03
+ LDYIM TWO
+ STY WORK ;counter for TBCOPY
+ STY TXBUF ;ARG to examine
+
+ INY ;X=13 here
+ JSR DOFSOP ;C=0 on return
+
+ STX WORK +&01 ;counter for Y in INFOT1 copy
+ LDA RXBUF +&01 ;update cycle number
+ STAIX TEMPX
+
+ LDA RXBUF
+ LDYIM &09
+ ADCIY TEMPX ;C=0 after DOFSOP
+ STAIY TEMPX ;update entry point
+
+ LDA RXCB +&08
+ SBCIM TXBUF +&02 ;calculate data received
+ STA RXBUF +&01 ;ready for GBPB$$ routine
+ STA WORK +&02 ;data counter for INFOT1
+ BEQ INSKIP ;********* zero data fudge ********
+ JSR INFOT1 ;perform data copying
+
+; LDAIM $00
+; STA W1
+INSKIP LDXIM &02
+INFO81 STAAX RXBUF +&02
+ DEX
+ BPL INFO81 ;fudge for GBPB$$
+
+ JSR GBPBXU ;update CB[$01->$04]
+ SEC
+ DEC W1 ;alter flag for add/sub routine
+ LDA RXBUF
+ STA RXBUF +&01
+
+ JSR GBPBXX ;update CB[$05->$08]
+ BEQ TBEXIT ;exit the routine
+
+TCLAIM    ;claim TUBE semaphore
+ LDAIM TBSEMA ;individual number
+ JSR TBINIT
+ BCC TCLAIM
+ RTS
+
+ LNK NFS07
+

@@ -1,0 +1,530 @@
+
+; > NFS03
+ TTL General Utilities
+ OPT UTILS
+
+; This file contains most of the useful utility routines
+; used by the rest of the programs and routines.
+
+
+FSRXCB  ;sets up an Rxcb into the FS buffer
+ LDAIM PREPLY ;option for default port
+FSRXCC     ;entry point for user-specified port
+ JSR FSTXCB
+ STA RXCB + PORT ;A preserved over call
+ LDAIM RXCC
+ STA RXCB +LPTR ;adjust the pointer
+ DEC RXCB ;$80 => $7F
+ RTS
+
+FSTXCB    ;sets up TXCB pointing to a full
+;FS buffer. The hi-pointer is ammended in another routine
+;to ensure that only significant data is sent.
+
+ PHA
+ LDYIM &0B
+FSTXL1 LDAAY TXTAB
+ STAAY TXCB
+ CPYIM TWO
+ BPL FSTXL2
+ LDAAY FSLOCN
+ STAAY TXCB + DESTN
+FSTXL2 DEY
+ BPL FSTXL1
+ PLA
+ RTS
+
+TXTAB
+ = TXFLAG
+ = PCMND
+ = ZERO
+ = ZERO
+ = BIGBUF
+ = /(BIGBUF )
+ALL1S = FILLER
+ = FILLER
+ = RXBUFE
+ = /(RXBUFE )
+ = FILLER
+ = FILLER ;usual table with padded addresses
+
+DOFSBX
+;entry point for use with the byte stream.
+;On entry :- A = Handle
+;X,Y as usual
+;The entry point saves the handle and sets
+;the carry as a flag for later use.
+
+ PHA ;save handle on stack
+ SEC ;the all-important bit
+ BCS DOFSL4
+
+DOFSUP CLV
+ BVC DOFSL6 ;common entry point
+
+BYE LDAIM &77
+ JSR OSBYTE
+ LDYIM FCBYE ;logoff code
+
+DOFSOP    ;first entry point, uses default timeout
+
+;perform a transaction with the fileserver.
+;ENTRY :: A = wait period for FS reply
+;X = extent of the FS buffer
+;Y = function code for the transaction
+
+ CLV
+DOFSER LDA URD ;enter here with A=delay, HDRURD=URD for no errors
+ STA HDRURD
+
+DOFSL6 CLC ;clear the carry on XMIT entry
+DOFSL4 STY HDRFN
+ LDYIM ONE
+DOFSL1 LDAAY CSD
+ STAAY HDRCSD ;copy other two handles
+ DEY
+ BPL DOFSL1
+DOFS0 PHP ;entry point with Fn and handles set up
+; LDAIM DLOAD
+; STA JWORK ;** 2/8/83 **
+ LDAIM PREPLY
+ STA HDRREP ;reply port
+ JSR FSTXCB
+ TXA
+ ADCIM FIVE
+ STA TXCB +HPTR ;ammend TXCB end pointer
+ PLP ;restore the carry flag
+ BCS DOFSL5 ;do different if C = 1
+ PHP ;save P over the call
+ JSR FSXMIT ;do the transmission
+ PLP
+; BCC DOFSL3
+DOFSL8  ; LDAIM DFINAL
+; STA JWORK
+DOFSL3 PHP
+ JSR FSRXCB ;reply on reply port
+; LDA JWORK ;eliminate WAIT1 routine
+ JSR WAITFS ;delay already set
+ PLP
+DOFSL7 INY ;Y=0 on exit from BSXMIT and WAIT
+ LDAIY RXCB +LPTR ;get the return code
+ TAX
+ BEQ DOFSEX
+ BVC DOFSEV ;skip if errors off
+
+ ADCIM &100-NOTFND ;C=0 here
+DOFSEV BNE FSERR ;stop if error not $D6
+DOFSEX RTS ;C=1, A=0 if "not found"
+
+DOFSL5 PLA ;get the handle for BSXMIT
+ LDXIM TXCB
+ INY
+ JSR BSXMIT ;do byte stream
+ STA W2 ;save new sequence numbers
+ BCC DOFSL7 ;.. then leap off to inspect the return code
+
+;            *********************************
+;         ***************************************
+;        ******        RANDOM ACCESS         *****
+;         ***************************************
+;            ********************************
+
+PUTBYT CLC
+RANDOM JSR ENTER ;disable escape
+ PHA
+ STA PUTB4
+ TXA
+ PHA
+ TYA
+ PHA ;save regs and carry
+ PHP
+ [ &00=0
+ STY SPOOL1 ;save new handle
+ ]
+ JSR Y2FS
+ STY PUTB3
+ STY SPOOL0 ;handle in FS format
+ [ &FF=0
+ STY SPOOL0 ;save new handle
+ ]
+ LDYIM PREPLY
+ STY PUTB1
+ JSR FSTXCB
+ LDAIM PUTB
+ STA TXCB +LPTR
+ LDAIM PUTB4 +&01 ;accurate offset
+ STA TXCB + HPTR ;ammend CB
+ INY
+ LDXIM FCPUTB
+ PLP
+ BCC RAND1
+ DEX
+RAND1 STX GETB2
+ LDA SPOOL0
+ LDXIM TXCB ;point to CB
+ JSR BSXMIT
+ LDX GETB2 ;check return code
+ BEQ RAND3
+
+ LDYIM RXBUFE -PUTB -&04
+ERROR1 LDAAY PUTB
+ STAAY PUTB +&04
+ DEY
+ BPL ERROR1
+
+ TAX ;last byte is error code 0
+ LDAIM &C6 ;read spool handle
+ JSR OSBYTE ;returned in X
+
+ [ &FF=0
+ TXA
+ JSR Y2FSA ;convert to FS format
+ CPY SPOOL0 ;check against spool handle
+ BNE FSERR0
+ |
+ LDAIM SPOFF
+ CPY SPOOL1
+ BEQ FSERR2
+ LDAIM EXOFF
+FSERR0 CPX SPOOL1
+ BNE FSERR4
+ ]
+
+FSERR2 TAX ;get address
+ LDYIM /(SPOFF ) ;hand string to OSCLI
+ JSR OSCLI
+
+FSERR4 LDAIM PUTB +&04
+ STA RXCB +LPTR ;ammend pointer
+ LDX GETB2
+
+FSERR   ;this handles errors from the file-server. These consist
+;of a standard header + a message CR. The routine replaces
+;the CR with a zero, replaces the CC with BRK and jumps to
+;the BRK packet thus formed.
+
+ STX ERROR ;save the error number for OSWORD call
+ LDYIM ONE
+ CPXIM &A8
+ BCS FSERR1
+ LDAIM &A8 ;standard error number
+ STAIY RXCB +LPTR
+
+ [ &FF=0
+FSERR1 INY
+ LDAIM CR ;look for carriage return
+ EORIY RXCB +LPTR
+ BNE FSERR1 ;no message longer than 256 bytes
+
+ ;*** Nb Fileserver MUST return zero Command Code ***
+ STAIY RXCB +LPTR ;stuff the CR with zero
+ JMI RXCB +LPTR ;jump to start of packet
+ |
+FSERR1 LDYIM &FF
+FSERR3 INY ;y=0 on entry
+ LDAIY RXCB + LPTR
+ STAAY &100
+ EORIM CR ;look for carriage return
+ BNE FSERR3
+ STAAY &100
+ BEQ NOL3
+ ]
+
+RAND3 STA SEQNOS ;update sequence numbers
+ PLA
+ TAY
+ PLA
+ TAX
+ PLA
+NOERR RTS ;all restored
+
+ESC LDA ESCADR ;$FF, top bit
+ AND ESCAP ;** 9/12/83 **
+ BPL NOERR
+ LDAIM &7E
+ JSR OSBYTE ;ack the escape condition
+ JMP NLISNE ;leave with A=&7E
+
+;This code is called from a REMOTE proc call
+;and performs the following actions
+; 1) Disables KB
+; 2) Sets the pointer to the work area
+; 3) Set status busy
+; 4) Sets the Read/Write/Byte/Word masks
+; 5) Sets up the CB
+; 6) Set mode7
+; 7) Set auto repeat rates
+; 8) Enter current language
+
+REMOT LDYIM STAT2 ;adjust status byte
+ LDAIY PAGE1
+ BEQ REMOT1 ;skip if already remoted
+RCHEX JMP CLRJSR ;enable JSR's again anyway
+REMOT1 ORAIM &09 ;set bits 3,0 => REMOTED, remote DISallowed
+ STAIY PAGE1
+
+ LDXIM &80 ;entry from RCHAR, omitting test phase
+
+ LDYIM JSRBUF ;copy numbers from JSRBUF to TERMIN
+ LDAIY PAGE1
+ PHA
+ INY
+ LDAIY PAGE1
+ LDYIM RTXCB +&03
+ STAIY WORKP1
+ DEY
+ PLA
+ STAIY WORKP1 ;what a lot of fuss
+
+ JSR REMOL0
+ JSR CBSET1 ;new routine
+
+ LDXIM ONE
+ LDYIM ZERO
+ LDAIM &C9
+ JSR OSBYTE ;disable the KB
+
+RESET JSR CLRJSR ;enable JSR's again
+ LDXIM &02
+RESET2 LDAIM &00
+RESET1 STAAX &100
+ DEX
+ BPL RESET1
+NOL3 JMP &100 ;BASIC fatal error
+
+RCHAR   ;chars from REMOTE
+ LDYIM STAT2
+ LDAIY PAGE1
+ BEQ REMOT1
+
+ LDYIM JSRBUF
+ LDAIY PAGE1
+ LDYIM RTXCB +&02
+ CMPIY WORKP1 ;same station ????
+ BNE RCHEX ;skip if not
+
+CHARIN LDYIM JSRBUF +&02;grab the data passed
+ LDAIY PAGE1
+ TAY ;char in Y
+ LDXIM ZERO ;KB buffer
+ JSR CLRJSR ;after reading data, enable JSR's
+ LDAIM &99 ;put char into buffer, detect Escape
+ JMP OSBYTE ;and then return
+
+NREPLY  ;a routine which indicates that a 'no reply'
+;error has just occurred. This uses the MOS BRK convention.
+
+ LDAIM &08
+ BNE NLISN2
+
+NLISTN   ;this is similar to the above but produces
+;a 'not listening' message.
+
+ LDAIX TXCBP ;get flag byte
+NLISNE ANDIM &07 ;get low 7 bits
+NLISN2 TAX ;use this as offset
+ LDYAX ERRTAB ;get message offset
+
+ LDXIM  0
+ STX &100
+NOL2 LDAAY MESTAB
+ STAAX &0101 ;copy text message
+ BEQ NOL3
+ INY
+ INX
+ BNE NOL2
+
+SPOFF = "SP.",CR
+EXOFF = "E."
+CROFF = CR
+
+SP1 * SPOFF :SHR:  8
+CR1 * CROFF :SHR:  8
+ [ CR1 - SP1=0
+ |
+ ! 0,"SPOOL, EXEC not in same page"
+ ]
+
+WAITFS LDAIM DFINAL
+WAIT PHA ;save 'seconds' byte
+
+FSRXON LDA LFLAG
+ PHA ;second entry on stack is Rx flag
+ LDX RXCBP + 1 ;Check if RX'ing into page zero control block
+ BNE WAITJD ;No => DONT SET SYSTEM RX FLAG !
+
+ ORAIM &80 ;enable system Rx
+ STA LFLAG
+
+WAITJD LDAIM ZERO ;initialise counter
+ PHA
+ PHA ;null bytes
+ TAY
+ TSX ;must not use store, so use stack
+WAITL1 LDAIY RXCBP ;poll RXCB
+ BMI WAITEX ;something happened
+ DECAX &0101
+ BNE WAITL1
+ DECAX &0102
+ BNE WAITL1
+ DECAX &0104
+ BNE WAITL1
+
+WAITEX PLA
+ PLA
+ PLA
+ STA LFLAG
+ PLA ;tidy stack
+ BEQ NREPLY
+ RTS
+
+GETBYT SEC
+ JSR RANDOM ;return with C = 1
+ SEC
+ LDAIM &FE ;error byte
+ BIT GETB4 ;return with A,X,Y all saved
+ BVS GETBEY ;test flag = $40
+ CLC
+ PHP
+ LDA SPOOL0 ;get handle
+ PLP
+ BMI GBLAST ;test flag = $80
+ JSR CLREOF ;clear end-of-file
+GBLAST JSR SETEOF ;fall thru' ok here
+ LDA GETB3
+GETBEY RTS ;A = data, X,Y preserved, C = condition
+
+MESTAB
+NLIST1 = LINJAM,"Line Jammed",ZERO
+NLIST2 = NETER,"Net Error",ZERO
+NLIST3 = NOLISE,"Not listening",ZERO
+NLIST4 = NOCLK,"No Clock",ZERO
+NLIST5
+NLIST6
+NLIST7 = ESCER,"Escape",ZERO
+NLIST8 = OPTER,"Bad Option",ZERO
+NRMSG = NOREPE,"No reply",ZERO
+
+CHAPRT LDYIM &0E
+ LDAIY TEMPX
+
+;BBCFS  change BBC protection format to FS
+ ANDIM &3F
+ LDXIM PROTTC - PROTTB - &01 ;index for the table
+ BNE BBCFS ;common code
+FSBBC  ;change FS protection format to BBC
+ ANDIM &1F ;lose top 3 bits
+ LDXIM FILLER
+BBCFS STA JWORK ;spare zero page
+ LDAIM ZERO ;result returned in A
+
+BBCFS1 INX
+ LSR JWORK
+ BCC BBCFS2
+ ORAAX PROTTB
+BBCFS2 BNE BBCFS1 ;not done yet
+ RTS ;return in A
+
+PROTTB = &50 ;set bits4, 6
+ = &20
+ = &05
+ = &02
+ = &88 ;set bits3, 7
+
+PROTTC = &04
+ = &08
+ = &80 ;unused bit in access byte
+ = &10
+ = &01
+ = &02
+
+FSXMIT
+;on call to transmit, pointer to TXCB is
+;passed in page-0, indicated by X. Y holds
+;the delay between retries and A holds the
+;the number of retries.
+
+;FSXMIT assumes that TXCB is used, XMIT is
+;the general routine
+
+ LDXIM TXCB
+ STX TXCBP
+ LDXIM /(TXCB )
+ STX TXCBP +&01
+
+XMITFS LDAIM FSTRY ;standard number of retries
+XMITFY LDYIM FSDELY ;standard delay
+
+XMIT PHA
+ TYA
+ PHA
+ LDXIM ZERO
+ LDAIX TXCBP
+L0 STAIX TXCBP
+ PHA
+L5 ASL TXCLR
+ BCC L5 ;poll until clear
+
+ LDA TXCBP ;copy pointer now that semaphore claimed
+ STA LTXCBP
+ LDA TXCBP +&01
+ STA LTXCBP +&01
+
+ JSR BRIANX
+L4 LDAIX TXCBP
+ BMI L4
+ ASLA
+ BPL L2
+ ASLA
+ BEQ LE
+
+ JSR ESC
+
+ PLA
+ TAX
+ PLA
+ TAY
+ PLA
+ BEQ LE
+ SBCIM &01
+ PHA
+ TYA
+ PHA
+ TXA
+
+MSDELY
+DLPP DEX
+ BNE DLPP ;1msec loop
+ DEY
+ BNE DLPP ;Outer loop
+
+ BEQ L0
+LE TAX ;X=0 here
+ JMP NLISTN
+L2 PLA
+ PLA
+ PLA
+
+ JMP ENTER ;disable escape after here
+
+;** dont drop thru' here
+
+PUTREG STX &F2
+ STY &F3 ;set up for MOS
+; STX CMNDP
+; STY CMNDP +%1 ;command line pointer
+REGPUT   ;save the registers for later recovery
+ STA TEMPA
+REGXY STX TEMPX ;save X,Y only
+ STY TEMPY ;forms a 0-page pointer of X,Y
+ STX POINTR
+ STY POINTR +&01
+ENTER PHP ;** 9/12/83 **
+ LSR ESCAP ;** disable escape
+ PLP ;carry preserved
+ RTS
+
+
+ LNK NFS04 link to next file
+
+

@@ -1,0 +1,49 @@
+;  *** File Twelve *** > DOS12
+ TTL - DOS12 -  Pseudo-MOS PNUM kept at $XFF0
+ OPT &01
+
+ [ . > &BFDC
+ ! 1, "Help, Help!"
+ ]
+ [ . < &BFDC
+ % &BFDC - .
+ ]
+
+ ; ORG &BFDC
+
+IPRDEC
+ SED
+ CLC
+ LDA LINNO
+ ADCIM &01
+ STA LINNO
+ LDA LINNO + 1
+ ADCIM  0
+ STA LINNO + 1
+ CLD
+ JSR PNUM
+ LDA LINNO
+
+PNUM  ;******** PHA
+;******** PHP
+;******** JSR SFOUR
+;******** PLP
+;******** JSR PHNUM
+;******** PLA
+;********PHNUM TAX
+;******** BCS PHNUM0
+;******** BEQ PSPACE
+;******** BNE PHNUM0 ; Always
+
+HMTBUT
+ PHA
+ JSR SFOUR
+ JSR PHNUM0
+ PLA
+PHNUM0
+ JSR DIGUT1 ; Convert to character
+ JSR OSASCI ; Same as JSR DIGOUT only to SPOOL file ******* HMT
+ SEC
+ RTS
+
+ END

@@ -1,0 +1,172 @@
+;*** File Nine *** - DOS09
+ TTL - DOS09 -  Copy complete disk
+ OPT &01
+;* BACKUP - Does disk backup sector
+;  for sector *
+ [ NOENAB=0
+ |
+CHKENA BIT ENAFLG
+ BPL CHKEN0
+
+ JSR SURE
+ BEQ CHKNA1
+ PLA
+ PLA ; Peel off one RTS level
+CHKNA1 JMP PCRLF
+ ; ******* JSR ESTRNG
+ ; ******* = CNENUM,"Not enabled",$00
+ ]
+
+GET2DR JSR CHKSYN
+ JSR GETDRV
+ STA FDRIV
+ JSR CHKSYN
+ JSR GETDRV
+ STA TDRIV
+ TYA
+ PHA
+ LDAIM &00
+ STA LINNO + &01
+ LDA TDRIV
+ CMP FDRIV
+ BNE COPYNS
+ LDAIM &FF
+ STA LINNO + &01
+ STA LINNO + &02
+COPYNS JSR GETLSZ
+ JSR VSTRNG
+ = "Copying from :"
+ LDA FDRIV
+ JSR DIGOUT
+ JSR VSTRNG
+ = " to :"
+ LDA TDRIV
+ JSR DIGOUT
+ JSR PCRLF
+ PLA
+ TAY
+ CLC
+CHKEN0 RTS
+
+
+CHKDSF JSR SAVITA
+ BIT LINNO + &01
+ BPL CHKDS1
+ LDAIM &00
+ BEQ CHKDS0
+CHKDST JSR SAVITA
+ BIT LINNO + &01
+ BMI CHKDS2
+CHKDS1 RTS
+CHKDS2 LDAIM &80
+CHKDS0 CMP LINNO + &02
+ BEQ CHKDS1
+ STA LINNO + &02
+ JSR VSTRNG
+ = "Insert ",&EA
+ BIT LINNO + &02
+ BMI CHKDS3
+ JSR VSTRNG
+ = "source"
+ BCC CHKDS4
+CHKDS3 JSR VSTRNG
+ = "destination",&EA
+CHKDS4 JSR VSTRNG
+ = " disk and hit a key",&EA
+ JSR CLRKEY
+ JSR OSRDCH
+ BCS ABORT
+
+;Print carriage return line feed
+PCRLF PHA
+ LDAIM CR
+ JSR PCHR
+ PLA
+ RTS
+
+SURE JSR VSTRNG
+ = "Go (Y/N) ? ",&EA
+;Get a 'Y' or 'N' from the keyboard
+; defaults to 'N'
+GETYN JSR CLRKEY
+ JSR OSRDCH
+ BCS ABORT
+ ANDIM &5F
+ CMPIM "Y"
+ PHP
+ BEQ GETYN0
+ LDAIM "N"
+GETYN0 JSR PCHR
+ PLP
+ RTS
+
+;Abort command
+ABORT JMP ESCAPE
+
+NOCOP JMP NOROOM
+
+ [ NOENAB=0
+CPYDSK
+ |
+CPYDSK ; ******* JSR CHKENA
+ ]
+ JSR GET2DR
+ ; ******
+ JSR CHKENA
+ ; ******
+ [ NOENAB=0
+ ]
+ LDAIM &00
+ STA WORK + &0D
+ STA WORK + &0F
+ STA WORK + &0E
+ STA WORK + &0C
+ STA LINNO
+ JSR CHKDSF
+ LDA FDRIV
+ STA FDRIVE
+ JSR DIRLDY
+ LDA DIRHIG + &07
+ STA WORK + &0A
+ LDA DIRHIG + &06
+ ANDIM &03
+ STA WORK + &0B
+;***************************** HMT
+; LDA DIRHIG + $06 ; Get boot option
+; ANDIM $F0
+; STA QTEMP
+;***************************** HMT
+ JSR CHKDST
+ LDA TDRIV
+ STA FDRIVE
+ JSR DIRLDY
+ LDA DIRHIG + &06
+ ANDIM &03
+ CMP WORK + &0B
+ BCC NOCOP
+ BNE CPYDK4
+ LDA DIRHIG + &07
+ CMP WORK + &0A
+ BCC NOCOP
+CPYDK4 JSR MVDKDA ; Move the data HMT
+;************************* HMT
+; LDA DIRHIG + $06
+; PHA
+; LDA DIRHIG + $07
+; PHA
+
+ JMP DIRLDY ; Get the dir back into RAM
+
+; PLA
+; STA DIRHIG + $07
+; PLA
+; ANDIM $0F
+; ORA QTEMP
+; STA DIRHIG + $06
+
+; JMP DIROUT
+; This removed does not increment the MSN on the copy. HMT
+
+;************************* HMT
+
+ LNK DOS10

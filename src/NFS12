@@ -1,0 +1,153 @@
+ ; -> NFS12
+
+ORG52 * ORG51 +LEN51
+ ORG RTUBE
+S52 * .
+ JMP BEGIN
+ JMP ESCAPE
+ADRR CMPIM &80
+ BCC ADDROK
+ CMPIM &C0
+ BCS ADDRW
+ ORAIM &40
+ CMP CLAIMER
+ BNE ADDRWZ ;don't release, someone else (may of course be already released)
+ADRREL
+ PHP ; ************************************ Bruce 27/2/86 *************
+ SEI ; ************************************ Bruce 27/2/86 *************
+ LDAIM &05 ;tell 2nd processor transfer has stopped
+ JSR WRIFOR
+ LDA CLAIMER
+ JSR WRIFOR
+ PLP ; ************************************ Bruce 27/2/86 *************
+ADRRAL LDAIM &80
+ STA CLAIMER ;** 18/1/84 ** 2's bug in FS
+ STA CLAIMT
+ RTS
+ADDRW ASL CLAIMT
+ BCS ADDRWA ;got it
+ CMP CLAIMER
+ BEQ ADDRWZ ;same loony again so tell him ok
+ CLC
+ RTS
+ADDRWA STA CLAIMER
+ADDRWZ RTS
+ADDROK PHP ;**** Jes
+ SEI ;**** critical region
+ STY QRAM +&01
+ STX QRAM
+ JSR WRIFOR
+ TAX
+ LDYIM &03
+ LDA CLAIMER ;inform 2nd processor of user
+ JSR WRIFOR
+ADRRB LDAIY QRAM
+ JSR WRIFOR
+ DEY
+ BPL ADRRB
+; JSR WRIFOR ;** 10/1/84 **
+ LDYIM &18 ;clear M and V flags
+ STY R1STAT
+ LDAAX VSTATE ;tube flags state
+ STA R1STAT
+ LSRA
+ LSRA
+ BCC ADRRWP
+ BIT R3DATA ;** 10/1/84 **
+ BIT R3DATA ;** 10/1/84 **
+ADRRWP JSR WRIFOR ;** 10/1/84 **
+ADRRWT BIT R4STAT ;synchronising byte
+ BVC ADRRWT
+ BCS ADRRP
+ CPXIM &04
+ BNE ANRTS
+ADRRGO JSR ADRREL ; implicit release
+ JSR RDCHA
+ JMP TSTART
+ADRRP ; BIT R3DATA ** 10/1/84 **
+; BIT R3DATA ** 10/1/84 **
+ LSRA
+ BCC ANRTS
+ LDYIM &88
+ STY R1STAT ;set M flag
+ANRTS PLP ;restore interrupt status *** Jes
+ RTS
+BEGIN CLI
+ BCS BEGINR ;carry preserved from BEGIN
+ BNE BEGINK
+ JMP QRPLY
+BEGINK
+ [ 1=1 ; ************************************ Bruce 27/2/86 **********
+ LDXIM &00
+ LDYIM &FF
+ LDAIM &FD
+ JSR OSBYTE
+ TXA
+ |
+ LDA &28D
+ ]
+ BEQ ADRRGO
+BEGINR LDAIM &FF ;*****
+ JSR ADRR ;*****
+ BCC BEGINR ;*****
+ ; SEI ; ************************************ Bruce 27/2/86 *************
+ JSR SETADR
+SENDW
+; PHP ; ************************************ Bruce 27/2/86 *************
+; SEI ; ************************************ Bruce 27/2/86 *************
+ LDAIM &07
+ JSR TADDR
+ LDYIM &00
+ STY ZRAM
+SENDL LDAIY ZRAM
+ STA R3DATA
+ [ 1=1 ; ************************************ Bruce 27/2/86 *************
+ NOP
+ NOP
+ NOP
+ |
+ PHA
+ PLA
+ ]
+ INY
+ BNE SENDL
+; PLP ; ************************************ Bruce 27/2/86 *************
+ INC SADR +&01
+ BNE SENDT
+ INC SADR +&02
+ BNE SENDT
+ INC SADR +&03
+SENDT INC ZRAM +&01
+ BIT ZRAM +&01
+ BVC SENDW
+ JSR SETADR
+ LDAIM &04
+TADDR LDYIM /(SADR )
+ LDXIM SADR
+ JMP ADRR
+SETADR LDAIM &80
+ STA SADR +&01
+ STA ZRAM +&01
+ LDAIM &20
+ AND &8006
+ TAY ;**** Jes
+ STY SADR
+ BEQ BEGINA
+ LDX &8007
+BEGINL INX
+ LDAAX &8000
+ BNE BEGINL
+ LDAAX &8001
+ STA SADR
+ LDAAX &8002
+ STA SADR +&01
+ LDYAX &8003
+ LDAAX &8004
+BEGINA STA SADR +&03
+ STY SADR +&02
+ RTS
+
+E52 * .
+LEN52 * E52 - S52 
+
+ LNK NFS13

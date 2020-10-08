@@ -1,0 +1,108 @@
+;*** File Seven *** > DOS07
+ TTL - DOS07 -  Help & Syntax;
+ OPT &01
+;* Contains syntax messages *
+
+;Get help on DFS
+HELP TYA
+ LDXIM &FF
+ LDYIM COMNO
+HELP1 PHA
+ JSR VSTRNG  ;Print DFS version number
+ = CR,"DFS "
+ = "0" + VERH
+ = "."
+ = "0" + VERM
+ = "0" + VERL
+ [ NOENAB=0
+ = "*"
+ ]
+ = CR
+ STX COMTXT
+HELP0 LDAIM &00
+ STA ETEMP
+ JSR PDSPC  ;Indent info two spaces
+ JSR PSYNTX
+ JSR PCRLF
+ DEY
+ BNE HELP0
+ PLA
+ TAY
+HELP2 LDXIM HLPTAB - COMTAB - &03
+ JMP WNAME0
+
+;Get help about UTILS
+PMHELP TYA
+ LDXIM INITBL - COMTAB - &01
+ LDYIM UTLNO
+ BNE HELP1
+
+;Don't know about that item of help
+NOHELP JSR SETUPR
+ BEQ PSYNT4  ;End of line => go away
+NOHLP1 JSR RDCHR
+ BCC NOHLP1
+ BCS HELP2
+
+CHKSYN JSR SETUPR
+ BNE PSYNT4
+SYNERR JSR FSTRNG
+ = SYNNUM,"Syntax: "
+ STX ETEMP
+ JSR PSYNTX
+ LDAIM &00
+ JSR PHELPC
+ JMP ERRBUF
+
+PSYNTX LDX COMTXT
+SYNER1 INX
+ LDAAX COMTAB
+ BMI SYNER0
+ JSR PHELPC
+ JMP SYNER1
+SYNER0 INX
+ INX
+ STX COMTXT
+ LDAAX COMTAB
+ JSR PSYNT5
+ JSR SFOUR
+PSYNT5 JSR SAVITA
+ ANDIM &0F
+ BEQ PSYNT4
+ TAY
+ LDAIM " "
+ JSR PHELPC
+ LDXIM &FF ; Used to be $00
+PSYNT2 INX
+ LDAAX ARGTBL
+ BPL PSYNT2
+PSYNT1 DEY
+ BNE PSYNT2
+ ANDIM &7F
+PSYNT3 JSR PHELPC
+ INX
+ LDAAX ARGTBL
+ BPL PSYNT3
+ RTS
+
+PHELPC JSR SAVITA
+ LDX ETEMP
+ BEQ PHLPC0
+ INC ETEMP
+ STAAX ERRBUF
+PSYNT4 RTS
+PHLPC0 JMP PCHR
+
+ARGTBL = !("<"),"fsp>"
+ = !("<"),"afsp>"
+ = !("("),"L)"
+ = !("<"),"source> <dest.>"
+ = !("<"),"old fsp> <new fsp>"
+ = !("("),"<dir>)"
+ = !("("),"<drive>)"
+ = !("<"),"title>"
+ = !("<"),"drive>"
+ = !(&FF ) ; Terminator
+
+
+ LNK DOS08

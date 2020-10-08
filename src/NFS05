@@ -1,0 +1,845 @@
+; > NFS05
+ TTL Filing System
+ OPT VIIIX
+;              ***********************
+;           *****************************
+;         ********      OSFILE      *******
+;           *****************************
+;              ***********************
+
+
+; OSFILE is a MOS call which deals with almost all
+; operations concerning Files which can be performed
+; using the file-title. Such operations include
+; Loading, Saving, Reading and Writing catalogue info
+; for existing files. All calls are associated with
+; a control block and the A register, to determine the
+; operation involved.
+
+;     X,Y -> --------------------
+;            : Pointer to title   : (2)
+;             --------------------
+;            : Load Address       : (4)
+;            --------------------
+;            : Exec Address       : (4)
+;            --------------------
+;            : Data start [length]: (4)
+;            --------------------
+;            : Data end [Protn.]  : (4)
+;            --------------------
+
+;A = &FF -> LOAD file. If byte 6 of CB = 0
+;then load to supplied address else load to file address.
+;A = 0 -> SAVE file
+;A = 1,5 see CHARGS
+
+QUOTES LDYIM ONE
+FILE1 LDAIY TEMPX
+ STAAY &F2
+ DEY
+ BPL FILE1
+
+QUOTED LDYIM &00 ;routine entered here too
+QUOTER LDXIM &FF
+ CLC
+ JSR GSINIT
+ BEQ QUOTE2 ;look for null string
+QUOTE1 JSR GSREAD
+ BCS QUOTE2 ;continue until C=1
+ INX
+ STAAX FNAME  ;Y,A updated
+ BCC QUOTE1
+QUOTE2 INX
+ LDAIM CR
+ STAAX FNAME  ;fill in CR
+ LDAIM FNAME
+ STA POINTR
+ LDAIM /(FNAME )
+ STA POINTR +&01
+ RTS
+
+FILEOP
+ JSR REGPUT
+ JSR QUOTES
+ LDA TEMPA ;test operation
+ BPL SAVEOP ;do a save operation
+ CMPIM &FF
+ BEQ LOADOP ;only allow legal operations
+ JMP REGGET ;else return
+
+ TTL OSFILE - load
+
+LOADOP JSR COPYCL ;copy the filename
+ LDYIM FCLOAD ;Y=Fn. code, X= buffer extent
+
+LODCMD LDAIM PLDATA ;enter here on load as command
+ STA ESCAP ;** 9/12/83 **
+ STA HDRURD ;fudge header to carry data port
+; LDAIM DLOAD
+ JSR DOFSUP
+
+ LDYIM SIX
+ LDAIY TEMPX ;get exec flag
+ BNE LODFIL ;if flag unset then skip loadaddress copy
+
+ JSR LODR1 ;copy from CB to WORK
+ JSR LODR2 ;copy from RXBUF to CB
+ BCC LODCOM
+
+LODFIL JSR LODR2 ;ammend CB with final data
+ JSR LODR1 ;copy data into WORK
+
+LODCOM LDYIM FOUR ;C=0 here from either branch
+LODSIZ LDAAX WORK
+ STAAX RXCB +HPTR
+ ADCAX RXBUF +&08 ;.. WORK4-7 hold hi pointer
+ STAAX WORK +&04 ;calculate file size
+ INX
+ DEY ;count on Y
+ BNE LODSIZ ;loop three times for add
+ SEC
+ SBC RXBUF +&0B ;C=0 here
+ STA WORK +&07
+
+ JSR LODLP3 ;do the data xfer
+
+ LDXIM TWO
+LODATT LDAAX RXBUF +&0B ;move the date/protn.
+ STAAX RXBUF
+ DEX
+ BPL LODATT
+ BMI SAVRTS ;dual exit routine
+
+;Entry conditions for LODLP3 are that WORK[0:7]
+;hold the low and high addresses of the buffer
+;being received into. These locations are altered
+;during the routine and need not neccesarily
+;reside in 0-page
+
+LODLP3    ;main loop for block transfer from FS
+
+ JSR DATA0 ;test for zero data
+ BEQ LODX
+
+ LDAIM PLDATA
+ STA RXCB + PORT ;set up the data port
+
+LODLPV LDXIM THREE
+LODLPX LDAAX RXCB + HPTR
+ STAAX RXCB + LPTR
+ LDAAX WORK +&04
+ STAAX RXCB + HPTR
+ DEX
+ BPL LODLPX
+
+ LDAIM RXRDY
+ STA RXCB ;ready for receive
+ JSR WAITFS
+
+ LDYIM THREE
+LODCHK LDAAY RXCB +HPTR
+ EORAY WORK +&04
+ BNE LODLPV
+ DEY
+ BPL LODCHK
+LODX RTS
+
+ TTL OSFILE - Save
+
+;    *********************
+;******      SAVE       ******
+;    *********************
+
+SAVEOP    ;called when A=0
+
+ BEQ SAVEL1
+ JMP CHARGS
+SAVEL1 LDXIM FOUR
+ LDYIM &0E
+
+SAVSIZ
+ LDAIY TEMPX
+ STAAY WORK -&0A ;save at WORK4->7
+ JSR DOWN4
+ SBCIY TEMPX ;take start from end
+ STAAY TXBUF -&02 ;save size
+ PHA ;eliminate copying
+ LDAIY TEMPX
+ STAAY WORK -&0A ;save start addr for now
+ PLA ;restore size
+ STAIY TEMPX ;update CB
+ JSR UP5
+ DEX ;count on X
+ BNE SAVSIZ ;four byte size spec'd
+
+ LDYIM NINE
+SAVLP1 LDAIY TEMPX
+ STAAY TXBUF -&02
+ DEY
+ BNE SAVLP1 ;copy load and exec addresses
+ LDAIM PSAACK
+ STA ESCAP ;** 9/12/83 **
+ STA HDRURD
+ STA WORK +&08 ;save ack. port for later
+
+ LDXIM &0B
+ JSR COPYCX
+
+ LDYIM FCSAVE
+; LDAIM DREPLY
+ JSR DOFSUP ;do the operation
+ LDA RXBUF ;get data port
+
+ JSR SAVLP ;else get the data
+
+SAVRTS LDA RXBUF - 2 ;Store fs indication from command code
+ PHA
+
+ JSR DOFSL8 ;share RC inspection code
+
+;Screen monitor routine
+;Assumes the OSFILE control block
+;is up to date and the TEMPX points
+;at it, also that POINTR points at
+;the file title
+ 
+ PLA ;Restore fs type indication
+
+ LDY MESS
+ BEQ SAVJD2
+ LDYIM &00 ;messages on here
+
+ TAX ;Check fd type indication
+ BEQ MONL1 ;Z implies old FS
+ JSR INFOLP ;else print string in buffer
+ BMI MONL3 ;exit condition
+
+MONL1 LDAIY POINTR
+ [ &FF=0
+ CMPIM CR ;write until $EOT$
+ BEQ MONL2
+ CMPIM SPACE
+ BEQ MONL2 ;spaces disallowed [4/10/82]
+ |
+ CMPIM &21
+ BCC MONL2
+ ]
+ JSR OSASCI
+ INY
+ BNE MONL1
+
+MONL2 JSR NUMSP
+ INY
+ CPYIM &0C
+ BCC MONL2
+
+MONL3 LDYIM &05
+ JSR NUMOUT ;print load address
+
+ LDYIM &09
+ JSR NUMOUT
+ LDYIM &0C
+ LDXIM THREE
+ JSR NUM01
+
+ JSR OSNEWL
+
+SAVJD2
+ ; LDXIM  0 ; ****************************** Bruce 27/2/86 ***********
+ STX RXBUF +&03 ;zero byte for attributes
+ LDYIM &0E
+ LDA RXBUF ;convert protection format
+ JSR FSBBC
+SAVJD3 STAIY TEMPX ;fill in the CB
+ INY
+ LDAAY RXBUF -&0E ;Read next byte
+ CPYIM &12
+ BNE SAVJD3
+
+SAVEXX JMP REGGET ;restore registers and return
+
+LODR1   ;routine to copy from CB into WORK
+ LDYIM FIVE
+LODRL1 LDAIY TEMPX
+ STAAY WORK -&02 ;grab from LOAD address area
+ DEY
+ CPYIM TWO
+ BCS LODRL1 ;stop after 4 bytes
+
+UP5 INY ;pointer manipulation
+UP4 INY ;routines
+ INY
+ INY
+ INY
+
+ RTS
+
+LODR2   ;routine to copy LOAD and EXEC addr to CB
+ LDYIM &0D
+ TXA ;zero here
+LODRL2 STAIY TEMPX
+ LDAAY RXBUF - &03
+ DEY
+ CPYIM TWO
+ BCS LODRL2
+
+DOWN4 DEY ;space saving 10/3/83
+DOWN3 DEY
+ DEY
+ DEY
+ RTS
+
+;Entry conditions for this routine are that
+;WORK[0:7] hold the low and high addresses of
+;the data being sent. WORK[8] holds the port
+;on which to receive the byte acknowledges for
+;each data block.
+
+SAVLP
+ PHA ;save this for call
+ JSR DATA0
+ BEQ EOFRTS
+
+SAVLP2 LDAIM ZERO ;Push 4-byte buffer value
+ PHA
+ PHA
+ TAX ;Set counter = 0
+ LDA RXBUF + 2
+ PHA
+ LDA RXBUF + 1
+ PHA
+ LDYIM  4
+ CLC
+
+SAVJD1 LDAAX WORK
+ STAAX TXCB +LPTR
+ PLA
+ ADCAX WORK
+ STAAX RXCB +HPTR
+ STAAX WORK
+ INX
+ DEY
+ BNE SAVJD1
+;BCS SAVCC ;wrap-round check
+
+;Y=0, X=4 here
+ SEC
+SAVCHK LDAAY WORK ;get current end pointer
+ SBCAY WORK +&04
+ INY
+ DEX
+ BNE SAVCHK ;loop 4 times
+ BCC SAVMOR ;carry set on end condition
+
+SAVCC LDXIM &03 ;come here on wraparound
+SAVEND LDAAX WORK +&04
+ STAAX TXCB +HPTR
+ DEX
+ BPL SAVEND
+
+SAVMOR PLA ;get data port
+ PHA ;save this again
+ PHP
+ STA RXCB +PORT
+ LDAIM TXFLAG
+ STA TXCB
+ JSR FSXMIT ;send the data
+ LDA WORK +&08
+ JSR FSRXCC ;ready for reply
+ PLP
+ BCS EOFRTS
+ LDAIM PSAACK
+ STA RXCB + PORT
+; LDAIM DSAVE
+
+ INC RXCB +LPTR ;RX ack. into RC slot, avoiding CC which indicates
+;which fs type we are communicating with.
+;Note assumes RXBUF don't cross a page !!
+
+ JSR WAITFS
+ BNE SAVLP2
+
+ TTL OSFSCM - EOF
+
+; The BBCpu BASIC has a peculiar method of recognising
+; the end of an open file; the last byte is signalled,
+; the next byte returns with carry set and the next is
+; an error. The user may have upto eight files open
+; at once, so a byte is used to hold eight hints about
+; the state of each file. The hint bit, if zero, indicates
+; that the user is certainly NOT at the end of file,
+; otherwise the FS must be interrogated. The EOF status
+; is updated after GETBYTE(S),OPEN and EOF operations.
+; The hint is unset on a PTR update operation.
+
+
+EOFR
+;hint set = 0
+
+ PHA
+ TXA ;handle passed in X
+ JSR Y2FSA ;convert to FS form
+
+ TYA
+ AND EOF ;get the flag bit
+ TAX ;return it in X
+ BEQ EOFRTS ;if zero then done
+ PHA ;save true handle
+ STY TXBUF
+ LDYIM FCEOF
+ LDXIM ONE
+ JSR DOFSOP
+ PLA ;A=true handle
+ LDX RXBUF ;X<>0 indicates end-of-file
+ BNE EOFRTS
+ JSR CLREOF
+EOFRTS PLA
+ LDY TEMPY
+ RTS  ;restore A and Y
+
+ TTL OSFILE - args 1->6
+
+;     ***********************
+;********* OS-ARGS CALLS  *********
+;     ***********************
+
+CHARGS
+;concerned with READING and WRITING of file
+;statistics. Operation is specified by A, passed
+;in the call
+
+
+;From the current specification :-
+
+;A = 1 : WRITE catalogue info for file
+;A = 2 : WRITE load address for file
+;A = 3 : WRITE exec address for file
+;A = 4 : WRITE attributes for file
+;A = 5 : READ file's catalogue information, Type in A
+
+ STA TXBUF ;save A as FS arg
+ CMPIM SIX ;OSFILE delete
+ BEQ CHA6
+ BCS CHA6XX ;error return
+ CMPIM FIVE
+ BEQ CHA5
+ CMPIM FOUR
+ BEQ CHA4 ;slightly different
+ CMPIM ONE
+ BEQ CHA1 ;also a bit different
+ ASLA
+ ASLA ;multiply by four
+ TAY ;form offset
+ JSR DOWN3
+ LDXIM THREE
+CHALP1 LDAIY TEMPX
+ STAAX TXBUF +&01
+ DEY
+ DEX
+ BPL CHALP1
+ LDXIM FIVE
+ BNE CHASK2 ;skip a bit
+
+CHA1 JSR CHAPRT ;get protection status
+ STA TXBUF +&09
+ LDYIM &09
+ LDXIM &08
+CHALP2 LDAIY TEMPX ;copy all LOAD, EXEC address
+ STAAX TXBUF 
+ DEY
+ DEX
+ BNE CHALP2
+ LDXIM &0A
+CHASK2 JSR COPYCX ;filename after details
+ LDYIM FCSET
+ BNE CHAFSX
+
+CHA6 JSR COPYCL ;copy the filename
+ LDYIM FCDEL ;dec 20
+CHAFSX BIT ALL1S
+ JSR DOFSER ;perform the delete
+CHA6XX BCS CHA5FY ;exit if error found
+ BCC CHA5FX
+;[NB. no copy back of ex-cat info]
+
+CHA4 JSR CHAPRT
+ STA TXBUF +&01
+ LDXIM TWO
+ BNE CHASK2
+
+CHA5 LDXIM ONE ;offset in the buffer
+ JSR COPYCX ;copy filename
+ LDYIM FCREAD ;function code to read args
+ JSR DOFSOP ;get the info from FS
+
+ LDA RXBUF + &0C ;get the access byte
+ STX RXBUF +&0C
+ STX RXBUF +&0F
+ JSR FSBBC ;convert the protection format
+
+; LDX RXBUF ;get the existence flag
+; BEQ CHA5FL ;.. object not found
+
+ LDYIM &0E
+ STAIY TEMPX ;set access byte
+ DEY
+ LDXIM &0C ;counter thru RXBUF
+COPYFS LDAAX RXBUF ;copy from FS buffer to CB
+ STAIY TEMPX ;count on Y
+ DEY
+ DEX
+ BNE COPYFS
+
+ INX ;X=1
+ INX
+ LDYIM &11
+CHA5LP LDAAX RXBUF +&0D ;copy the date
+ STAIY TEMPX ;write the attributes to the CB
+ DEY
+ DEX
+ BPL CHA5LP
+ LDA RXBUF ;get existence flag
+;CHA5FL
+; TXA
+CHA5FY BPL GETXY ;restore X,Y and return
+
+ TTL OSARGS
+
+;           ***************************
+;          *****      OSARGS       *****
+;           ***************************
+
+
+; A routine for reading/writing a file's attributes
+; when only the handle is known. X points to four
+; zero-page locations, Y = handle, A = op. type.
+; The data is read/copied via the zero page bytes.
+
+OSARGS    ;general entry point
+ JSR REGPUT ;save registers
+ CMPIM &03
+ BCS REGGET ;exit if 'ensure' attempted
+ CPYIM ZERO
+ BEQ OSARG0 ;Y=0, more calls for OSARGS
+ JSR Y2FS ;convert handle
+ STY TXBUF ;store handle
+ LSRA ;get operation
+ STA TXBUF +&01 ;set the argument
+
+;A=0 : read pointer
+;A=1 : write pointer
+;A=2 : read extent
+
+ BCS SETARG ;write the pointer
+
+ LDYIM FCGARG
+ LDXIM TWO
+ JSR DOFSOP ;do the reading
+ STA TEMPA ;indicate operation performed
+ LDX TEMPX ;restore X value
+ LDYIM TWO ;Y=2
+ STAAX THREE
+SETLP1 LDAAY RXBUF ;copy data to zero page
+ STAAX TWO ;indexed by X
+ DEX
+ DEY
+ BPL SETLP1
+CHA5FX BCC REGGET ;tidy up and return
+
+SETARG    ;data in 0-page off X
+ TYA
+ PHA ;save handle
+ LDYIM THREE
+SETLP2 LDAAX THREE
+ STAAY TXBUF +&02
+ DEX
+ DEY
+ BPL SETLP2 ;copy three bytes
+ LDYIM FCSARG
+ LDXIM FIVE
+ JSR DOFSOP ;do the operation
+ STX TEMPA ;return A=0 if operation performed
+ PLA ;restore handle
+ JSR SETEOF ;and unset the hint
+REGGET   ;recovery of regs from usual locations
+ LDA TEMPA
+GETXY LDX TEMPX ;restore X,Y only
+ LDY TEMPY
+ RTS
+
+OSARG0  ;come here when Y=0
+ CMPIM  2
+ BEQ OSARG3
+ BCS FINDEX
+ TAY ;A=0 or 1
+ BNE OSARG1 ;return pointer to rest of command line
+ LDAIM  10 ;magic network number
+OSARG3 LSRA ;return A=a/2 here
+ BNE GETXY ;all done
+OSARG1 LDAAY JCMNDP
+ STAIY TEMPX ;tricky, TEMPY=0 !
+ DEY
+ BPL OSARG1 ;copy the last command line residue
+ STYZX &2 ;stuff top bytes with $FF ** 4/8/83 **
+ STYZX &3
+FINDEX LDAIM ZERO;must return A=0 here
+OSEXIT BPL GETXY
+
+ TTL OSFIND
+
+;                ***********************
+;              ***************************
+;             ******      OSFIND      *****
+;              ***************************
+;                ***********************
+
+
+;OSFILE is the system call to open a file for read/
+;write/update. The operation is specified by A.
+;A = 0 -> Close the file whose handle is given in Y.
+;A <>0 -> Open file whose name is pointed at by X,Y.
+;If A = &80 then writing and updating
+;If A = &C0 then reading only
+
+
+;The two flag bytes are set as follows :
+;Flag 1 = 1 -> READ else WRITING/UPDATE
+;Flag 2 = 1 -> EXISTS else WILL BE CREATED
+
+
+;When a file is opened for reading then it must
+;already exist, if opened for writing/update
+;then it need NOT exist.
+
+
+FINDOP
+ JSR PUTREG
+ SEC ;detect 0-handle exception
+ JSR Y2FSX ;convert Y
+ TAX ;check operation type
+ BEQ CLOSE ;A=0 so do close, handle in Y
+
+ ANDIM &3F ;check top bits only
+ BNE FINDEX ;exit if invalid parameter
+ TXA ;restore A
+
+ EORIM &80 ;flip top bit only
+ ASLA
+ STA RXBUF
+ ROLA
+ STA RXBUF +&01
+ JSR QUOTED ;strip quotes
+ LDXIM TWO
+ JSR CATLP0 ;copy the filename
+
+ LDYIM FCFIND ;= 6
+ BIT ALL1S ;set V
+ JSR DOFSER
+ BCS GETXY ;skip if error found
+OPEN1 LDA RXBUF ;get the handle returned
+ TAX
+ JSR SETEOF ;can't be EOF yet
+ TXA ;restore handle
+ [ &FF=0
+ ORA SEQNOS
+ STA SEQNOS
+ TXA
+ ]
+ JSR FS2A ;convert the handle to internal form
+OPENEX BNE GETXY ;restore X,Y and return
+
+CLOSE
+ TYA ;detect CLOSE#0
+ BNE CLOSE1
+ LDAIM &77
+ JSR OSBYTE
+ LDYIM ZERO
+CLOSE1 STY RXBUF
+ LDXIM ONE ;do not change this value
+ LDYIM FCSHUT
+ JSR DOFSOP
+ LDA RXBUF
+ JSR SETEOF ;so that next EOF goes to  FS
+CLOSEX BCC REGGET
+
+ TTL OSFSCM - *OPT command
+
+OPTION BEQ OPT0 ;** 22/8/83 **
+ CPXIM FOUR
+ BNE OPTERR ;first parm must be 4
+ CPYIM FOUR
+ BCC OPTL1 ;second must be less than 4
+OPTERR DEX ;look for message switch
+ BNE OPTER1 ;nb C=0 here
+OPT0 STY MESS ;save flag
+ BCC OPT2 ;and exit
+OPTER1 LDAIM &07
+ JMP NLISNE ;error string
+OPTL1 STY TXBUF
+ LDYIM FCOPT
+ JSR DOFSOP ;set this in the fileserver
+ LDY TEMPY
+ STY OPT ;update the local copy
+OPT2 BCC CLOSEX ;clean up
+
+ TTL OSGBPB
+
+;                   ****************************
+;                 ****      MULTIPLE BYTE     ****
+;                   ***     RANDOM ACCESS    ***
+;                     ************************
+
+;That is to say, GETBYTES and PUTBYTES
+
+;------------------
+;: Handle          : (1)
+;-----------------
+;: Pointer to data : (4)
+;-----------------
+;: No. to transfer : (4)
+;-----------------
+;: Offset in file  : (4)
+;-----------------
+
+;The control block is passed via X,Y as usual plus
+;A indicating which operation is to be performed.
+;A = 1 -> PB using supplied pointer
+;A = 2 -> PB using file pointer
+;A = 3 -> GB using supplied pointer
+;A = 4 -> GB using file pointer
+
+;C = 0 -> all ok, transfer complete
+;C = 1 -> end-of-file encountered
+
+;Due to spec. changes there now exist four more
+;entry points to this routine. These are untidy
+;but useful in theory. Unfortunately, they involve
+;passing data across the TUBE, the only place in
+;the entire document which needs this
+
+;The new entry points are:
+;A = 5 -> Read Disc title, cycle number, option
+;A = 6 -> Read Current Directory
+;A = 7 -> Read Current Library
+;A = 8 -> Read filenames (specified by CB)
+
+;The data format is as follows:
+;<name length><object name>
+;A Null object name is denoted by a namelength of 0 chars.
+
+GBPBXY LDYIM &09
+ JSR GBPBXZ
+GBPBXU LDYIM &01
+GBPBXZ CLC
+GBPBXX LDXIM &FC ;count up to zero
+GBPBXV LDAIY TEMPX
+ BIT W1 ;test flag
+ BMI GBPSUB ;if plus then sub
+ ADCAX RXBUF - &FB
+ JMP GBPBX
+GBPSUB SBCAX RXBUF -&FB
+GBPBX STAIY TEMPX ;update the CB
+ INY
+ INX
+ BNE GBPBXV ;count four loops
+ RTS
+
+OSBGPB JSR REGPUT ;save registers
+ TAX
+ BEQ GBPBX0 ;A=0 so exit
+ DEX
+ CPXIM &08 ;A>8 in call ?
+ BCC GBPBX1 ;No ?
+GBPBX0 JMP REGGET ;else exit
+GBPBX1 TXA ;set up codes 0,3
+ LDYIM ZERO
+ PHA
+ CMPIM FOUR ;look for the new codes
+ BCC GBPBE1
+ JMP OSINFO
+GBPBE1 LDAIY TEMPX ;get the handle for file
+ JSR Y2FSA ;convert the format
+ STY TXBUF
+ LDYIM &0B
+ LDXIM &06
+GBPBF1 LDAIY TEMPX
+ STAAX RXBUF +&01
+ DEY
+ CPYIM &08
+ BNE GBPBF2
+ DEY ;skip top byte
+GBPBF2 DEX
+ BNE GBPBF1 ;copy six bytes only
+ PLA ;get operation flag
+ LSRA
+ PHA
+ BCC GBPBL1 ;skip if A=2 or 4
+ INX ;X=0 or 1
+GBPBL1 STX TXBUF +&01 ;save the flag byte
+
+;zero = use passed pointer
+;non-zero = use file pointer
+
+ LDYIM FCPBYS
+ LDXIM PSAACK ;ack port for save
+ PLA ;restore code >> 1
+ PHA ;save it again
+ BEQ GBPBL2 ;so code must be GB
+ LDXIM PLDATA
+ DEY ;and fn getbytes = fn putbytes + 1
+GBPBL2 STX HDRURD ;hand over the requisite port
+ STX WORK +&08 ;save ack port for pickup by SAVLP
+ LDXIM EIGHT
+ LDA TXBUF ;get the handle
+ JSR DOFSBX ;do bytestream, A=handle,Y=fn.code etc.
+ LDA W2
+ STA SEQNOS
+
+; **** DEAL WITH THE TRANSFER ****
+
+ LDXIM FOUR
+; LDYIM ONE
+  ;C=0 on exit from DOFSBX
+GBPBL3 LDAIY TEMPX
+ STAAY WORK -&01 ;set pointers for LODIN,SAVIN
+ STAAY RXCB + HPTR-&01
+ JSR UP4
+ ADCIY TEMPX
+ STAAY WORK -&01
+ JSR DOWN3
+ DEX
+ BNE GBPBL3
+ INX
+GBPBF3 LDAAX RXBUF -&02
+ STAAX RXBUF +&01 ;move buffer size
+ DEX
+ BPL GBPBF3
+
+ PLA ;restore flag
+ BNE GBPBL4 ;**** NOTE CONDITION ****
+
+ LDA HDRURD ;get data port
+ JSR SAVLP ;PUTBYTES so save the data
+ BCS GBPBL5
+
+GBPBL4 JSR LODLP3 ;else load the data
+GBPBL5
+;    **** TIDY UP ****
+ JSR DOFSL8
+ LDAIX TEMPX ;get the handle
+ BIT RXBUF ;bit7=1 -> EOF#
+ BMI GBPBE
+ JSR CLREOF ;clear the hint
+GBPBE JSR SETEOF;fall thru is OK here
+ STX W1 ;flag to indicate subtraction
+ JSR GBPBXY ;general add/sub routine
+ DEC W1 ;flag to indicate addition
+ SEC
+ JSR GBPBXX ;perform the operation
+
+  ;all done now
+ ASL RXBUF ;get the flag byte for operation
+; ASLA ;shift bit 7 into carry
+ JMP FINDEX
+
+ LNK NFS06

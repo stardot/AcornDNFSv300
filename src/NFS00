@@ -1,0 +1,360 @@
+
+ TTL ECONET Version III - High level source > NFS00
+ OPT &01
+;     This is an upgrade of the existing ECONET version II
+; for use with the BBC microcomputer. These sources deal
+; with the high level function of the network and assume
+; the existence of an underlying low-level software doing
+; all of the hard work such as transmission of packets.
+; The commenting of the sources may well give some clue as
+; to the intended function of the code. If the entire
+; implementation is finished by the end of April 1982, I
+; for one will be very surprised.
+;
+;
+;
+;      VVV      VVV           ####   ####   ####
+;       VVV    VVV             ##     ##     ##
+;       VVV    VVV             ##     ##     ##
+;        VVV  VVV              ##     ##     ##
+;        VVV  VVV              ##     ##     ##
+;         VVVVVV      %%       ##     ##     ##
+;          VVVV       %%      ####   ####   ####
+;
+;
+ OPT  3
+;     *** Print options ***
+NOLIST *  2
+LIST *  1+4
+
+VIII0 * LIST
+ROMP * LIST
+BRIAN * LIST
+UTILS * LIST
+DEBUG * LIST
+VIIIX * LIST
+PATCH * LIST
+VIII2 * LIST
+MOS * LIST
+NETZ * LIST
+VIEW * LIST
+UADE51 * LIST
+UADE52 * LIST
+UADE53 * LIST
+
+ TTL System Organisation
+ OPT VIII0
+
+YES * &0000
+NO * &FFFF ;conditional assembly
+
+
+BBC * YES ; Assemble for BBCpu
+ROM * YES ; Sideways ROM
+LOWLVL * YES ; Is Low-level incorporated
+REG4XX * YES ; Is Register 1 available
+
+ ORG &8000
+LOWORG * . + &1630 ;low level code start address
+
+ < &00 ;get source from drive zero
+ > &02 ;object code to drive two
+
+
+;    *** SYSTEM CALLS ***
+OSRDCH * &FFE0
+OSASCI * &FFE3
+OSWRCH * &FFEE
+OSCRLF * &FFE7
+OSNEWL * OSCRLF
+OSCLI * &FFF7
+OSBYTE * &FFF4
+OSWORD * &FFF1
+DISC * &9F9D ;* was $9FC8 DFS
+HEXOUT * &BFF0 ;** In DFS Rom now **
+
+;    *** FILE SERVER CODES ***
+
+FCSAVE * &0001 ;save
+FCLOAD * &0002 ;load
+FCEXAM * &0003 ;examine
+FCCHDR * &0004 ;catalogue
+FCCMND * &0005 ;load as command
+FCFIND * &0006 ;find/open
+FCSHUT * &0007 ;close
+FCBGET * &0008 ;getbyte
+FCPUTB * &0009 ;putbyte
+FCGBYS * &000A ;getbytes
+FCPBYS * &000B ;putbytes
+FCGARG * &000C ;read pointer/extent of open file
+FCSARG * &000D ;set the pointer/extent of open file
+FCDISC * &000E ;returns the current discs
+FCUSRS * &000F ;returns logged-on users
+FCEOF * &0011 ;end-of-file
+FCREAD * &0012 ;read args
+FCSET * &0013 ;set args
+FCDEL * &0014 ;code for delete
+FCUSER * &0015 ;read user environment
+FCOPT * &0016 ;set AUTOBOOT option number
+FCBYE * &0017 ;logoff (*BYE) code
+
+
+;    *** PORTS ***
+
+;large fudge due to the need to interface
+;with the version 2 file server
+PCMND * &0099
+PREPLY * &0090
+PSAACK * &0091
+PLDATA * &0092
+PREMOT * &0093 ;remote port
+PBLOCK * &00D1 ;printer port for blocks
+
+;     The ports are arranged in the space above #B0 (say),
+; to allow the user a clear field from 1 to #AA. If you
+; put this in a manual it looks as if you've thought about
+; it. Obviously more ports can be accomodated, it's just
+; that I happen to like ports with the same digit
+; repeated, like #EE.
+
+;    *** Delays for various operations eg. load,save ***
+
+DLOAD * &002A ;all in seconds, all the same for now
+DFINAL * &002A
+DLODBK * &0014
+DREPLY * &0014
+FSDELY * &0060 ;ms delay here
+DSAVE * &002A
+
+;    *** Operating System Vectors ***
+
+FILVEC * &0212
+
+;    *** Error numbers ***
+
+LINJAM * &A0
+NETER * &A1
+NOLISE * &A2
+NOCLK * &A3
+TXCBER * &A4
+ESCER * &11
+OPTER * &CB
+NOREPE * &A5
+NOTFND * &D6
+
+;    *** A few constants ***
+
+ZERO * &0000
+ONE * &0001
+TWO * &0002
+THREE * &0003
+FOUR * &0004
+FIVE * &0005
+SIX * &0006
+SEVEN * &0007
+EIGHT * &0008
+NINE * &0009
+
+HAND * &0020
+FS * &FE ;default fileserver
+PS * &EB ;default printer station
+ERRCUT * &00A8 ;error cutoff for FS
+
+;*** selectors in Control block ***
+
+LPTR * &0004
+HPTR * &0008 ;hi pointer into Tx/Rxcb
+DESTN * &0002 ;destination part of packet
+PORT * &0001 ;port part of packet
+
+;*** Context info held in page #E00 ***
+
+FSLOCN * &0E00 ;put at start of page E
+URD * FSLOCN +&02
+CSD * URD +&01
+LIB * CSD +&01
+OPT * LIB + &01 ;BOOT option number
+MESS * OPT +&01 ;flag to indicate messages on,off
+EOF * MESS +&01 ;flags for EOF operation
+SEQNOS * EOF +&01 ;sequence numbers for Byte stream
+;*** Context is defined by these locations ***
+ERROR * SEQNOS +&01 ;slot for last unknown error
+SPARE * ERROR + &01
+JCMNDP * SPARE
+
+;*** Manifests for useful things ***
+
+CR * &000D ;carriage return
+SPACE * &0020 ;space
+FILLER * &00FF ;padding for 4-byte addresses
+TXFLAG * &0080 ;OR this with flag byte before xmit
+RXRDY * &007F ;set flag byte to this value for reception
+FSTRY * &00FF ;number of retries
+SCREND * &8000 ;end of screen memory
+RXCBS * &12 ;number of RXCBs available
+
+;   *** OSBYTE Manifests and the like ***
+
+MARK * &00D9
+FSPACE * &00DA
+
+;   *** Function codes for Immediate operations ***
+
+PEEK * &0081
+POKE * &0082
+
+;   *** Zero page workspace, starting from #B8 ***
+
+PFLAGS * &99 ;Printer status flags
+
+TXCBP * &9A ;pointer used with lo level
+RXCBP * TXCBP ;complement to $23D in V2
+
+LTXCBP * &A0
+
+PBUFFP * &D61 ;*** dedicated area somewhere ***
+TXCLR * &D62 ;flag to show Tx in progress
+LSTAT * &D63 ;copy of PEEK, POKE status
+LFLAG * &D64 ;flag byte used for T/Rx
+OLDJSR * &D65 ;old copy of JSR buffer protection bits
+TBFLAG * &D67 ;TUBE present flag, held by BRIAN
+
+;**** work area for OSWORD, SROMs & VIEW ****
+
+UTIL0 * &A8
+UTIL1 * UTIL0 + 1
+UTIL2 * UTIL1 + 1
+UTIL3 * UTIL2 + 1
+UTIL4 * UTIL3 + 1
+UTIL5 * UTIL4 + 1
+
+;**** Low level variables etc ****
+
+WORK * &B0 ;space for variables
+W1 * WORK +&02
+W2 * W1 +&01 ;spare work variables
+
+;**** NB Two bytes free here ($CD,$CE) ****
+
+JWORK * &B8 ;three bytes used for timing purposes
+UNUSED * JWORK +&01 ;two spare bytes here *****
+ROMY * UTIL0
+ROMA * UTIL1
+CRFLAG * UNUSED ;used in two column cat's
+SPOOL1 * UNUSED + 1 ;used in RANDOM access
+TEMPX * JWORK +&03 ;start of 0-page area
+TEMPY * TEMPX +&01 ;save Y,forms a pointer with X
+TEMPA * TEMPY +&01 ;save monkeying with the stack
+POINTR * TEMPA +&01 ;a nice area for a pointer
+TEMP0 * POINTR +&02 ;space used in OSWORD calls
+TXCB * POINTR +&02 ;temp only
+RXCB * TXCB ;note blocks overlap exactly
+SPOOL0 * RXCB +&0F ;last byte in 0-page, holds handle
+ESCAP * &97 ;flag to determine if escapable
+;** 9/2/84 moved from $CC due to printing clash
+ESCADR * &00FF ;flag for escape
+
+;    *** RAM allocation of two pages, #0E and #0F ***
+
+BIGBUF * &0F00
+TXBUF * BIGBUF +&05 ;start of TX data area
+RXBUF * TXBUF
+RXBUFE * BIGBUF +&FF ;buffer size is 256
+HDRREP * BIGBUF
+HDRFN * HDRREP +&01 ;function code
+HDRURD * HDRFN +&01 ;urd slot
+HDRCSD * HDRURD +&01 ;csd slot
+HDRLIB * HDRCSD +&01 ;lib slot
+RXCC * RXBUF -&02 ;control code
+RXRC * RXCC +&01 ;return code
+
+CMNDP * &E10 ;pointer to rest of command line
+RSTAT * JCMNDP +&03 
+
+;**** Special buffer for BGET, BPUT ****
+
+PUTB * &0FDC ;buffer for single byte random access
+PUTB1 * PUTB
+PUTB2 * PUTB1 +&01
+PUTB3 * PUTB2 +&01
+PUTB4 * PUTB3 +&01
+GETB2 * PUTB2
+GETB3 * PUTB3
+GETB4 * PUTB4 ;buffer used for GETBYT as well
+
+;**** Area reserved, not to be used again ****
+
+TARGET * RSTAT +&01
+FNAME * CMNDP +&20 ;space to hold filename passed
+VDATA * TARGET +&02
+R6845 * &FE00
+D6845 * &FE01
+
+ROFF * &000A
+
+RWRITE * &0000
+RWORD * &0001
+RBYTE1 * &0002
+RBYTE2 * &0003
+
+;*** Manifest offsets in the static area (2) ***
+
+PRXCB * &00 ;offset from start of page
+PTXCB * &0000
+PSLOCN * PTXCB +&02 ;located inside the CB
+UFSCB *  12 *  2 ;dedicated CB for DOFSOP's
+RTXCB * &000C
+BUFFER * RXCBS * &0C +&1 ;lowest area available
+DATA1 * BUFFER +&01
+DATA2 * DATA1 +&01
+DATA3 * DATA2 +&01 ;pointers into the 4 byte data area
+DATA4 * DATA3 +&01
+VBUFF * &E9 ;offset in page2
+
+;*** Manifest offsets in the static area (1) ***
+
+SAVEAR * &0000 ;save area over OSWORD calls
+STAT2 * SAVEAR +&04;status byte
+SAVELO * STAT2 +&01;low level save area
+SAVEHI * SAVELO +&10 ;high level save area
+PBUFF * SAVEHI +&0A ;start of printer buffer
+JSRBUF * &0080 ;start of JSR buffer
+JSRSIZ * JSRBUF -&01 ;counter for JSR args
+UTXCB * JSRSIZ -&10 ;user TXCB
+PSIZE * UTXCB - PBUFF ;as much space as is available
+
+;*** dedicated pointers ***
+
+PAGE1 * &009C ;dedicated pointer
+WORKP1 * &009E ;pointer to workarea
+
+;*** MOS 0-page save area for registers ***
+
+PARMX * &00F0
+PARMY * &00F1
+PARMA * &00EF ;parameters passed in OSBYTE,WORD
+
+;*** TUBE registers and routines ***
+
+REG3 * &FEE5 ;write data to here
+TBINIT * &0406 ;initialise the TUBE
+TBSEMA * &C3
+TCSEMA * &83 ;claim and release protocol
+
+;*** MOS string reading routines ***
+
+GSINIT * &FFC2
+GSREAD * &FFC5
+
+;*** Control chars in data tables ***
+
+CBSTOP * &FE
+CBSKIP * &FD
+CBFILL * &FC
+
+;*** SEI-state 0-page ***
+
+SEI1 * &FA
+SEI2 * &FB
+
+ LNK NFS01

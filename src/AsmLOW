@@ -1,0 +1,8 @@
+*| -> AsmLOW
+*TurMasm
+*OPT 1 1
+
+ASM LOWROM
+
+
+*AsmGET

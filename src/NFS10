@@ -1,0 +1,100 @@
+
+; NFS10
+ OPT VIEW
+ TTL VIEW - computer end
+
+
+; Second iteration of VIEW facility, started 27/7/82
+; This version uses dynamically allocated buffer store
+; and so is much longer than would otherwise be the case.
+
+; The flag to indicate data ready is the dedicated
+; pointer ($9E,9F). This is set to non-zero value
+; on entry to this code, reset to zero on exit.
+; Polling on these bytes indicates data-ready and
+; also where the buffer is located.
+
+;**** The Viewed end ****
+
+; NB this end must be user-transparent as the NFS may
+; not be the dominant Filing-system.
+
+CVIEW  ;prefix 'C' implies 'computer end' [cf REMOTE]
+ LDA UTIL5 ;save this as work area
+ PHA
+
+ LDAIM VBUFF ;offset of VIEW buffer
+ STA WORKP1 ;resurect this pointer after use
+
+;***** Reading the Palette *****
+
+;Nb this code is in the wrong order at present
+
+ LDYIM ZERO
+ STY UTIL5
+ LDA &350
+ STAIY WORKP1
+ INC WORKP1
+ LDA &351
+ PHA
+ TYA
+
+CREAD2 STAIY WORKP1 ;update the CB
+ LDX WORKP1
+ LDY WORKP1 +&01
+ LDAIM &0B
+ JSR OSWORD 
+ PLA
+ LDYIM ZERO
+ STAIY WORKP1 ;restore previous result
+ INY
+ LDAIY WORKP1 ;preserve current result over next call
+ PHA
+ LDX WORKP1
+ INC WORKP1
+ INC UTIL5 ;increment the index
+ DEY
+ LDA UTIL5
+ CPXIM VBUFF +&10
+ BNE CREAD2 ;loop until buffer full
+ PLA ;clean up the stack
+
+ STY UTIL5 ;counter for OSbyte index
+ INC WORKP1 ;update the data pointer
+ JSR CREADS ;get the screen data
+ INC WORKP1
+ PLA
+ STA UTIL5 ;restore work area
+CLRJSR LDA OLDJSR ;reset the JSR `uffer protection bits
+ STA LSTAT ; ... with old mask byte
+; ... enable JSR's etc. again 
+ RTS ;return from the whole routine
+
+;***** Reading screen parameters *****
+
+CREADS LDA &355
+ STAIY WORKP1
+ TAX
+ JSR DOCALX
+ INC WORKP1
+ TYA
+ STAIX WORKP1
+ JSR DOCALL
+DOCALL LDXIM ZERO ;**** main routine ****
+DOCALX LDY UTIL5
+ INC UTIL5
+ INC WORKP1
+ LDAAY BYTETB ;get OSBYTE number
+ LDYIM &FF ;for READ&SET operations
+ JSR OSBYTE
+ TXA
+ LDXIM ZERO
+ STAIX WORKP1 ;save the data
+ RTS ;return
+
+BYTETB = &85
+ = &C2
+ = &C3 ;three calls to do
+
+;****** End of VIEWED part ******
+ LNK NFS11

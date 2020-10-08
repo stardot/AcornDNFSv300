@@ -1,0 +1,242 @@
+;  *** File Eleven *** > DOS11
+ TTL - DOS11 -  Pseudo-MOS resident utilities
+ OPT &01
+;All those useful facilities that can
+;be implemented by using only OSCALLs
+
+PRIBLD LDX ROMID
+ LDAAX PRIPTR
+ ANDIM &3F ; Dont use the FRUGAL bits
+ STA BLDTBL + &01
+ INC BLDTBL + &01
+ RTS
+
+;TYPE lists without line numbers
+TYPE JSR ZERCHK
+ LDAIM &00
+ BEQ TYPE0
+
+;LIST list with line numbers
+LIST JSR ZERCHK
+ LDAIM &FF
+TYPE0 STA LTEMP  ;Store in linno flag
+ LDAIM &40  ;Get for reading
+ JSR OSFIND  ;Get file
+ TAY
+ LDAIM CR  ;Start with a linno
+ CPYIM &00  ;Did the file exist ?
+ BNE TYPE3
+TYPE8 JMP NOFIL
+TYPE1 JSR OSBGET
+ BCS TYPE2  ;EOF??
+ CMPIM LF  ;Ignore LFs
+ BEQ TYPE1
+ PLP
+ BNE TYPE4
+ PHA
+ JSR IPRDEC  ;Print and INC linno
+ JSR PSPACE
+ PLA
+TYPE4 JSR OSASCI  ;Print char
+ BIT ESCFLG
+ BMI DUMP3
+TYPE3 AND LTEMP  ;Linno disable
+ CMPIM CR
+ PHP  ;Save linno flag
+ JMP TYPE1
+TYPE2 PLP  ;Remove from stack
+ JSR OSCRLF
+TYPE9 LDAIM &00  ;EOF close down
+ JMP OSFIND
+
+DUMP JSR ZERCHK
+ LDAIM &40
+ JSR OSFIND
+ TAY
+ BEQ TYPE8
+
+ JSR PRIBLD ; Put the private pointer+1 into BLDTBL+$01
+
+;  LDX ROMID
+;  LDAAX PRIPTR
+;  ANDIM $3F ; Dont use the FRUGAL bits
+;  STA BLDTBL + $01
+;  INC BLDTBL + $01
+
+DUMP3 BIT ESCFLG
+ BMI BUILD4
+ LDA LINNO + &01
+ JSR HMTBUT
+ LDA LINNO
+ JSR HMTBUT
+ JSR PSPACE
+ LDAIM &07
+ STA BLDTBL
+ LDXIM &00
+DUMP2 JSR OSBGET
+ BCS DUMP4
+ STAIX BLDTBL
+ JSR HMTBUT
+ JSR PSPACE
+ DEC BLDTBL
+ BPL DUMP2
+ CLC
+DUMP4 PHP
+ BCC DUMPB
+DUMPC LDAIM "*"
+ JSR OSASCI
+ JSR OSASCI
+ JSR PSPACE ;**************************** HMT
+
+ LDAIM &00
+ STAIX BLDTBL
+ DEC BLDTBL
+ BPL DUMPC
+DUMPB LDAIM &07
+ STA BLDTBL
+DUMP6 LDAIX BLDTBL
+ CMPIM &7F
+ BCS DUMP7
+ CMPIM " "
+ BCS DUMP8
+DUMP7 LDAIM "."
+DUMP8 JSR OSASCI
+ DEC BLDTBL
+ BPL DUMP6
+ JSR OSCRLF
+ LDAIM &08
+ CLC
+ ADC LINNO
+ STA LINNO
+ BCC DUMP9
+ INC LINNO + &01
+DUMP9 PLP
+ BCS TYPE9
+ BCC DUMP3
+
+BUILD4 JSR ACKESC
+ JSR TYPE9
+ JMP ESCAPE
+
+BUILD JSR ZERCHK
+ LDAIM &80
+ JSR OSFIND
+ STA LTEMP
+BUILD1 JSR IPRDEC
+ JSR PSPACE
+
+;  LDX ROMID
+;  LDYAX PRIPTR
+;  INY
+;  TYA
+;  ANDIM $3F ; Dont use FRUGAL bits
+;  STA BLDTBL + $01
+
+ JSR PRIBLD ; Put private pointer+1 into BLDTBL+$01
+
+ LDXIM BLDTBL
+ LDYIM &FF
+ STY BLDTBL + &02
+ STY BLDTBL + &04
+ INY ; Y := 0
+ STY BLDTBL
+ LDAIM " " ; Min. acceptable value
+ STA BLDTBL + &03
+ TYA
+ JSR OSWORD
+ PHP
+ STY UTEMP
+ LDY LTEMP
+ LDXIM &00
+ BEQ BUILD3  ;Always
+BUILD2 LDAIX BLDTBL
+ JSR OSBPUT
+ INC BLDTBL
+BUILD3 LDA BLDTBL
+ CMP UTEMP
+ BNE BUILD2
+ PLP
+ BCS BUILD4
+ LDAIM CR
+ JSR OSBPUT
+ JMP BUILD1
+
+;***************************************************************
+; This chunk is to be moved into DOS12 to ORG at the right place
+; to touch the top of the ROM so PNUM is always at $XFF0
+ [ &FF=0
+IPRDEC SED
+ CLC
+ LDA LINNO
+ ADCIM &01
+ STA LINNO
+ LDA LINNO + &01
+ ADCIM &00
+ STA LINNO + &01
+ CLD
+;******** CLC
+ JSR PNUM
+ LDA LINNO
+
+PNUM  ;******** PHA
+;******** PHP
+;******** JSR SFOUR
+;******** PLP
+;******** JSR PHNUM
+;******** PLA
+;********PHNUM TAX
+;******** BCS PHNUM0
+;******** BEQ PSPACE
+;******** BNE PHNUM0 ; Always
+
+HMTBUT PHA
+ JSR SFOUR
+ JSR PHNUM0
+ PLA
+PHNUM0 JSR DIGUT1 ; Convert to character
+ JSR OSASCI ; Same as JSR DIGOUT only to SPOOL file ******* HMT
+ SEC
+ RTS
+ ]
+;***************************************************************
+
+;Print two spaces
+PDSPC JSR PSPACE
+
+;Print a space
+PSPACE PHA
+ LDAIM " "
+ JSR OSASCI
+ PLA
+ CLC
+ RTS
+
+ZERCHK TSX  ;A=0 on return
+ LDAIM &00
+ STAAX &107
+ DEY
+ZERCH2 INY
+ LDAIY LINPTR
+ CMPIM " "
+ BEQ ZERCH2
+ CMPIM CR
+ BNE ZERCH1
+ JMP SYNERR
+ZERCH1 LDAIM &00  ;Clear the line counter
+ STA LINNO
+ STA LINNO + &01
+
+;Convert LINPTR + Y to XY
+ PHA
+ TYA
+ CLC
+ ADC LINPTR
+ TAX
+ LDA LINPTR + &01
+ ADCIM &00
+ TAY
+ PLA
+ RTS
+
+ENDPRG
+ LNK DOS12

@@ -1,0 +1,41 @@
+
+; NFS02
+ OPT BRIAN
+
+BRIANX * LOWORG + &0000 ;transmit address
+BRIANP * LOWORG + &0003 ;power up
+BRIANC * LOWORG + &0006 ;relinquish NMI
+BRIANQ * LOWORG + &0009 ;reclaim NMI, NO message
+BRIANI * LOWORG + &000C ;address for unknown interrupt
+
+
+ TTL Status Bytes
+
+; Low level byte
+ ; bit0 - PEEK 
+ ; bit1 - POKE
+ ; bit2 - HALT
+ ; bit3 - REMOTE JSR
+ ; bit4 - REMOTE PROC
+
+; High level byte
+ ; bit0 - REMOTE {allowed} [=0]
+ ; bit1 - VIEW {allowed} [=0]
+ ; bit2 - NOTIFY {allowed} [=0]
+ ; bit3 - STATION REMOTED [=1]
+ ; bit4 - KB event in REMOTE [=1]
+ ; bit5 - ESC event in REMOTE [=1]
+ ; bit6 - VIEW/NOTIFY busy [=1]
+ ; bit7 - NET FS selected [=1]
+
+; High level flags
+ ; bit0  Printer enabled [=1]
+ ; bit6 always one
+ ; bit7 Sequence number
+
+; Rx enable byte
+ ; bit6 USER Rx enable [=1]
+ ; Bit7 FS Rx enable [=1]
+
+
+ LNK NFS03

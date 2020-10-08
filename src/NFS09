@@ -1,0 +1,562 @@
+
+; > NFS09
+ TTL Remote Control - Computer end
+ OPT NETZ
+
+
+;This code is indirected from the NETVEC
+;currently located at $0224. All regs and
+;flags are preserved except where essential.
+
+;When a computer has control of a remote M/c
+;then it is said to be acting as a terminal.
+;The computer over which it has control is termed
+;the computer. All that the terminal does is
+;to poll its RRxcb like a dork until some
+;request from the computer is received.When this
+;occurs it is serviced and the RRxcb reopened.
+
+ENTRY
+ PHP
+ PHA
+ TXA
+ PHA
+ TYA
+ PHA ;save all registers
+ TSX ;get reason code
+ LDAAX &0103 ;from the stack
+ CMPIM &09
+ BCS ENTRY1 ;check inbounds
+ TAX
+ JSR GO
+ENTRY1 PLA
+ TAY
+ PLA ;get results from stack
+ TAX
+ PLA
+ PLP
+ RTS ;restore status
+
+GO LDAAX TABHIZ
+ PHA
+ LDAAX TABLOZ
+ PHA
+ LDA PARMA ;space saver
+ RTS
+
+TABLOZ
+ = RTTS -&01
+ = PRINT -&01;chars in printer buffer
+ = PRINT -&01;control-B
+ = PRINT -&01;control-C
+ = NWRCH -&01;net write char
+ = SELECT -&01;printer selection changed
+ = RTTS -&01;net read char
+ = NBYTE -&01;net OSBYTE call
+ = NWORD -&01;net OSWORD call
+
+TABHIZ
+ = /(RTTS -&01 )
+ = /(PRINT -&01 )
+ = /(PRINT -&01 )
+ = /(PRINT -&01 )
+ = /(NWRCH -&01 )
+ = /(SELECT -&01 )
+ = /(RTTS -&01 )
+ = /(NBYTE -&01 )
+ = /(NWORD -&01 )
+
+;WORKP1 is a pointer to the dynamic work area
+;above the Filing system. The 0-page is dedicated
+;to ECONET use only, so the pointer will be
+;set up at AUTOBOOT and remain constant.
+
+NWRCH
+;write a char, passed in Y.
+ TSX ;grab the stack pointer
+ RORAX &0106
+ ASLAX &0106 ;zero carry in Pbyte
+ TYA
+ LDYIM DATA1 ;offset in work area
+ STAIY WORKP1 ;buffer the char
+ LDAIM RWRITE ;tag the packet
+
+NTX LDYIM BUFFER ;store the tag byte
+ STAIY WORKP1 ;A passed in the call
+ LDAIM &80
+ LDYIM RTXCB ;offset of Remote T/Rxcb.
+ STAIY WORKP1 ;set flag byte
+
+ [  0=0
+ LDA TXCBP ;save work area over call
+ PHA
+ LDA TXCBP +&01
+ PHA
+ ]
+
+ STY TXCBP ;restore after use [was zero]
+ LDX WORKP1 +&01 ;pointer to the pointer
+ STX TXCBP +&01
+ JSR XMITFS ;do Tx, return to ENTRY
+
+ LDAIM &3F
+ STAIX TXCBP ;reset CB to deleted
+
+ [  0=0
+ PLA ;restore it again after call
+ STA TXCBP +&01
+ PLA
+ STA TXCBP
+ ]
+
+ RTS
+
+NBYTE
+;When a M/c is remoted there may be occasion
+;when the computer wishes to adjust the output
+;it gives, eg change the flash rates, scan
+;the KB etc. To do this OSBYTE and OSWORD calls
+;should be used. These are indirected across
+;the net to the terminal end. On reception
+;the calls are dealt with and the results passed
+;back across the net to the computer. Funky, huh!
+
+;Three bytes are passed, A,X,Y and the results
+;are returned in X,Y.
+
+;The parms are passed in PARMA, PARMX, PARMY.
+;Calls are claimed by V=1 on return.
+
+;This code deals with the computer end of
+;such a transaction. OSBYTE and OSWORD calls
+;are indicated by Tag number
+
+;[N.B. Vflag clear on entry]
+
+NCALL LDY PARMY
+ CMPIM &81
+ BEQ NCAL2 ;look for INKEY
+ LDYIM &01
+NCAL1 LDXIM NCTBPL -NCALTB ;those calls returning Y>0
+ JSR NCALLP ;loop
+ BEQ NCAL2
+ DEY
+ DEY
+ LDXIM NCTBMI -NCALTB ;those calls returning Y<0
+ JSR NCALLP ;loop
+ BEQ NCAL2
+ INY
+NCAL2 LDXIM RBYTE1
+ TYA ;set flags
+
+;[Y=0, call not taken]
+;[Y>0, just looking]
+;[Y<0. change and claim call]
+
+NCAL3 BEQ NBYTEX ;if call not recognised
+ PHP
+ BPL NBYTE6
+ INX
+NBYTE6 LDYIM DATA3 ;copy Y,X,A
+
+NBYTE1 LDAAY PARMA - DATA1 ;position independent
+ STAIY WORKP1
+ DEY
+ CPYIM DATA1 ;copy parms Y,X,A DATA1-3
+ BPL NBYTE1 ;buffer area
+
+NBYTE2 TXA ;previously stored tag
+
+ JSR NTX
+ PLP
+ BPL NBYTEX ;call to be done in BOTH M/c's
+
+ LDAIM &7F ;Changed 2/2/84 - JD
+ LDYIM RTXCB
+ STAIY WORKP1
+
+NRDCH2 LDAIY WORKP1
+ BPL NRDCH2 ;poll for char
+
+ TSX ;get the stack pointer
+ LDYIM DATA4
+
+ LDAIY WORKP1 ;get the parms
+ ORAIM &44 ;set Vflag and Ibit
+ BNE NBYTE5
+
+NBYTE4 DEY
+ DEX
+ LDAIY WORKP1 ;get the parms
+NBYTE5 STAAX &0106 ;return the registers and status
+ CPYIM DATA1
+ BNE NBYTE4
+
+NBYTEX RTS ;all set up so return
+
+NCALLP CMPAX NCALTB
+ BEQ NCALPX
+ DEX
+ BPL NCALLP ;returns Z=1 on success
+NCALPX RTS
+
+NCALTB = &04
+ = &09
+ = &0A
+; = $14
+ = &15 ;** 6/6/83 **
+ = &9A
+ = &9B
+ = &E1 ;** 7/2/84 **
+ = &E2
+ = &E3
+NCTBPL = &E4
+
+ = &0B
+ = &0C
+ = &0F
+ = &79
+NCTBMI = &7A
+
+NWORD
+;OSWORD calls intercepted in this manner
+;are 'make a sound' and 'define an envelope'.
+;As it is unlikely that such calls (or any
+;others) will need a result returning,
+;no mechanism is designed for this case.
+
+;Vflag clear on entry
+;recognise calls A=7 or 8 only
+ LDYIM &0E
+ CMPIM &07
+ BEQ WORD1
+ CMPIM &08
+ BNE NCALPX
+
+;If WORDOK returns Z=1 then Y is set
+;to be the number of parameters used in
+;the call +1.
+
+WORD1 LDXIM DATA2
+ STX WORKP1 ;ammend pointer
+
+NWORD1 LDAIY PARMX ;get the data
+ STAIY WORKP1 ;save it in the data area
+ DEY
+ BPL NWORD1 ;loop until all done
+ INY
+ DEC WORKP1 ;point to DATA1
+ LDA PARMA ;call number
+ STAIY WORKP1 ;@ DATA1
+ STY WORKP1 ;restore pointer=0
+
+ LDYIM RTXCB +&08 ;ammend pointer
+ LDAIM DATA2 +&0E ;new end pointer
+ STAIY WORKP1
+ LDAIM RWORD ;tag the message
+ JSR NTX
+
+ STX WORKP1 ;restore pointer
+ [ &FF=0
+ JMP CBSET
+ ]
+
+
+;*************************
+;** Initialisation code **
+;*************************
+
+CBSET   ;set up control blocks from table
+ LDXIM CB1 - CB0 ;first control offset
+ LDYIM UTXCB +&0D ;send to this offset
+ BIT ALL1S ;set Vflag
+ BVS CBSET2 ;common code
+CBSET1 LDYIM RTXCB +&0B
+ LDXIM CB2 - CB0 ;second offset in table
+CBSETP CLV ;discriminate on V flag
+CBSET2 LDAAX CB0 ;get entry
+ CMPIM CBSTOP
+ BEQ CBEXIT ;spare RTS
+ CMPIM CBSKIP
+ BEQ CBSET5
+ CMPIM CBFILL
+ BNE CBSET3 ;not dynamic char
+ LDA PAGE1 +&01
+ BVS CBSET6
+ LDA WORKP1 +&01
+CBSET6 STA TXCBP +&01
+CBSET3 BVS CBSET4
+ STAIY WORKP1
+ BVC CBSET5
+CBSET4 STAIY PAGE1
+CBSET5 DEY
+ DEX
+ BPL CBSET2 ;continue until STOP char
+CBEXIT INY
+ STY TXCBP ;TXCBP setup in this routine
+ RTS
+
+CB0
+ = &85
+ = &00
+ = CBSKIP ;destination
+ = CBSKIP
+ = UTXCB +&0E
+ = CBFILL ;dynamic page (1)
+ = &FF
+ = &FF
+ = UTXCB +&0F
+ = CBFILL ;dynamic page (1)
+ = &FF
+ = &FF
+ = &00 ;CHARIN call
+CB1 = &00
+
+ = CBSTOP
+ = &80
+ = PREMOT ;remote port
+ = CBSKIP ;spare space
+ = CBSKIP ;controlling station
+ = BUFFER ;start of buffer
+ = CBFILL
+ = &FF
+ = &FF
+ = DATA4+&01 ;allow room for long OSword call
+ = CBFILL
+ = &FF
+CB2 = &FF
+
+ = CBSTOP
+ = &D1
+ = CBSKIP
+ = CBSKIP
+ = PBUFF ;manifest start of print buffer
+ = CBSKIP ;'wrong' page here
+ = &FF
+ = &FF
+ = CBSKIP ;already setup
+ = CBSKIP
+ = &FF
+CB3 = &FF
+
+ TTL Network Print Routine
+ OPT &01
+
+; 27/5/82
+; During the course of this implementation
+; lots of changes have been made to the spec.
+; The latest of these requires that the PRINTER
+; BUFFER be in a seperate page, adjacent to the
+; page holding the Tx/Rx CB's. Ah well..
+
+; The page holding the PRINTER BUFFER is located
+; in the first static page, the Tx/Rx CB's are
+; in the second.
+
+; This code and the REMOTE facility share the same
+; page of DYNAMICALLY allocated STATIC workspace
+; and so can access it by the same pointer in 0-page.
+; As it cannot be guarenteed that these activities
+; will not interfere, care must be taken to ensure that
+; the pointer (WORKP1) is never left corrupted.
+
+SELECT  ;come here when print selection changes
+ DEX ;X=4 now
+ CPX PARMX ;look at new print selection
+ BNE SETUP1 ;A=6 here
+SETOK LDAIM PBUFF
+ STA PBUFFP ;initial pointer
+ LDAIM &41 ;initial flag byte
+SETUP1 STA PFLAGS
+SELEX RTS
+
+PRINT
+; ENTRY : A=1 char in buffer
+;       : A=2 control-B
+;       : A=3 control-C
+;       : Y=buffer number
+
+;PFLAGS is the print status byte
+; Bit7 = Sequence number
+; Bit6 = 1 always
+; Bit0 = 0 => print active
+
+ CPYIM FOUR ;buffer number
+ BNE SELEX
+
+;**********************
+; ENTER MAIN ROUTINE
+;**********************
+
+PRINT2
+
+;*********************
+; DETERMINE ACTION
+;*********************
+
+ TXA
+ DEX ;look for control code
+ BNE PRINCC ;save status
+
+
+;*******************
+; SET EXIT CARRY
+;*******************
+
+ TSX ;A=1
+ ORAAX &0106 ;set C=1
+ STAAX &0106
+
+;********************
+; EMPTY PRINT BUFFER
+;********************
+
+PRLP1 LDAIM &91
+ LDXIM THREE ;buffer number
+ JSR OSBYTE ;returns char in Y
+
+ BCS SELEX ;carry set => buffer empty
+ TYA
+ JSR PRBUFF
+ CPYIM PSIZE +PBUFF -&01 ;test buffer full
+ BCC PRLP1 ;continue until all chars buffered
+
+ JSR PRSEND ;Tx the data
+
+ BCC PRLP1 ;continue, maybe more chars in buffer
+
+PRBUFF LDY PBUFFP
+ STAIY PAGE1
+ INC PBUFFP
+ RTS
+
+PRINCC
+;************************
+; CONTROL CHAR HERE
+;************************
+
+ PHA ;save control char
+ TXA ;X=1 or 2
+ EORIM &01 ;A=0 or 3 here
+ JSR PRBUFF
+
+ EOR PFLAGS ;update the flags
+ RORA ;bit0 => carry
+ BCC PRIL1 ;if print condition=0 then skip
+
+ ROLA 
+ STA PFLAGS ;adjust PFLAGS for terminator flag
+ JSR PRSEND
+
+PRIL1 LDA PFLAGS
+ ANDIM &F0
+ RORA
+ TAX ;save this
+ PLA
+ RORA ;set up carry
+ TXA
+ ROLA ;into bit0
+ STA PFLAGS
+ RTS ;other values restored so exit, DORMANT
+
+PRSEND
+;*************************
+; SEND THE BUFFER
+;*************************
+
+ LDYIM PTXCB +&08
+ LDA PBUFFP
+ STAIY WORKP1
+ LDA PAGE1 +&01
+ INY
+ STAIY WORKP1
+ LDYIM PTXCB +&05
+ STAIY WORKP1
+ LDYIM PTXCB +&0B
+ LDXIM CB3 - CB0
+ JSR CBSETP ;returns Y=PTXCB +1
+ DEY
+
+;************************
+; UPDATE PFLAGS
+;************************
+
+ LDA PFLAGS
+ PHA
+ ROLA ;setup carry
+ PLA
+ EORIM &80 ;EOR top bit only
+ STA PFLAGS
+ ROLA ;get flag byte for TX
+ STAIY WORKP1 ;update flag byte
+
+;************************
+; SEND THE PACKET
+;************************
+
+ LDYIM PBUFF ;reset Pbuffp
+ STY PBUFFP
+
+ LDAIM &00 ;pseudo-handle
+ TAX
+ LDY WORKP1 +&01 ;point to PTXCB
+
+ CLI ;enable interrupts
+
+BSXMIT
+;entry conditions
+;A = Handle
+;X,Y point to the control block
+
+;A handle of Zero indicates a Print Stream
+;transaction. This sidesteps the SEQNOS
+;manipulation.
+
+ STX TXCBP
+ STY TXCBP +&01
+ PHA ;save acc
+ AND SEQNOS
+ BEQ BSXL1
+ LDAIM ONE
+BSXL1 LDYIM ZERO
+ ORAIY TXCBP ;setup the flag byte
+ PHA
+ STAIY TXCBP ;put the flag byte back
+ JSR XMITFS ;do the transmit
+
+ LDAIM FILLER ;The BGET/PUT byte fix !!!
+ LDYIM HPTR ;offset of 8 in CB
+ STAIY TXCBP
+ INY
+ STAIY TXCBP ;ready for anything here
+
+ PLA
+ TAX ;save it over next instr.
+ LDYIM PBLOCK ;ready for zero handle
+ PLA ;check handle or printer
+ PHA
+ BEQ BSPSX
+ LDYIM PREPLY
+BSPSX TYA
+ LDYIM &01
+ STAIY TXCBP ;set port
+ TXA
+ DEY
+ PHA ;save flag on stack
+BSXL0 LDAIM RXRDY
+ STAIY TXCBP
+ JSR WAITFS ;receive into the CB
+ PLA
+ PHA ;save old flag just in case
+ EORIY TXCBP
+ RORA ;look at the lsb
+ BCS BSXL0
+ PLA ;adjust stack
+ PLA 
+; TAX ;** 22/8/83 **
+; INX ;look for X=0 here
+; BEQ BSRTS
+ EOR SEQNOS ;update sequence number
+BSRTS RTS ;return with new SEQNOS in A
+
+ LNK NFS10

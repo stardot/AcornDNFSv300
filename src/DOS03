@@ -1,0 +1,580 @@
+;*** File Three *** -> DOS03
+ TTL - DOS03 -  Disk Primitives
+ OPT &01
+;FILE 03.  DISC HANDLER ETC
+
+;Output directory to disc
+DIROUT CLC  ;Cycle number in BCD
+ SED
+ LDA CYCNO
+ ADCIM &01
+ CLD
+ STA CYCNO
+
+;*********************** HMT
+; Maybe we should select the drive first ?
+ JSR DRVSSK
+;*********************** HMT
+
+ JSR LDTRYS
+DIROT0 LDYIM CHKSPD - CMDTAB
+ DEC CNTA
+ BMI DKNERN
+ JSR CMDRES
+ BNE DIROT0
+ JSR WRINT0  ;Returns NZ
+ BNE DIROT1  ;Always
+
+;Get directory from command line and
+; read it
+DIR JSR READRV
+
+DIRLD JSR DSKRDY
+ BEQ DIRLDY
+ LDA CATDRV
+ CMP FDRIVE
+ BEQ DRVSE0
+
+;Read directory always
+DIRLDY JSR DRVSSK
+ JSR RDINT0
+DIROT1 LDAIM &00  ;Detube
+ STA LDLOW + &01
+ STA TUBFLG
+ JSR GETTS
+ LDA FDRIVE
+ STA CATDRV
+ JMP DSKFIN
+
+;Check disk ready - returns
+; zero if not ready
+DSKRDY LDAIM &6C
+ JSR CMDDRV
+ JSR DSKRES
+ BCC DSKRDX ; C = Drive no. in CMDDRV
+ JSR SFOUR
+ SEC ; So C still = drive
+DSKRDX ANDIM &04
+DRVSE0 RTS
+
+;Output string of commands to controler
+CMDPAR LDAAY CMDTAB
+ JSR CMDDRV
+ INY
+CMDPRA LDAAY CMDTAB
+ INY
+ CMPIM &EA
+ BEQ DRVSE0
+ JSR DSKPAR
+ JMP CMDPRA
+
+DRVSSK JSR DRVSEL
+;Seek track zero
+ZTRKSC LDAIM NOPCLA
+ JSR NMICLA
+ LDYIM &00
+ STY TRACK  ;Zero track sector
+ STY SECTOR
+ STY READNO
+ INY
+ STY READNO + &02
+ INY
+ STY READNO + &01
+ LDYIM DSKQRZ - CMDTAB
+ JSR CMDRES
+ BEQ DRVSE0
+DKNERN JSR NMTREL
+ CMPIM &12
+ BNE DKERR0
+ JSR DSKMSG
+ = DKPNUM,"read only",&00
+
+DKERR0 PHA ; Save for printing
+ CMPIM &0A
+ BEQ DRVFLT
+ ANDIM &0F
+ CMPIM &08
+ BCC DRVFLT
+
+ JSR DSKMSG
+ = &00
+ BCC DSKFLT ; Always
+
+DRVFLT JSR RESFDC
+ JSR ESTRNG
+ = &00,"Drive "
+ NOP
+
+DSKFLT JSR GSTRNG
+ = DERNUM,"fault "
+ NOP
+ PLA
+ JSR TTSSER
+ JSR GSTRNG
+ = DERNUM,&00
+
+ ; Check the restore semaphore and do as necc.
+DSKZSK LDAIM &80
+ BIT QSTORE
+ BCS CHKDR1
+ BMI DELAY ; If Dr.0 OK, an RTS
+CHKDR2 ORA QSTORE
+ STA QSTORE
+ BNE ZTRKSC ; Always Restore
+CHKDR1 BVS DELAY ; If Dr.1 OK, an RTS
+ LSRA ; A:= $40, bit 6, .. C:= 0
+ BCC CHKDR2 ; Always
+
+; Now the Delay on write operations to cure Disc Fault 18, I hope
+DELAY JSR SAVITA ; Preserve Y is necc.
+
+ LDYIM  70
+DELAY1 DEX
+ BNE DELAY1
+ DEY
+ BNE DELAY1
+
+ RTS
+
+;Select drive
+DRVSEL JSR SAVITA
+
+ LDA FDRIVE  ;If preselected ignore
+ TAY
+ CMP OLDDRV
+ BNE DRVSL0
+ JSR DSKRDY
+ BNE DSKSEX ; another RTS in the wall
+DRVSL0 STY OLDDRV
+ LDAIM &3A
+ JSR DSKCMD
+ LDAIM &23
+ JSR DSKPAR
+ LDAAY SELPAR
+ JSR DSKPAR
+;***************************************** A Fix ????
+ TYA
+ RORA ; Set the carry for ...
+ LDYIM RSROP - CMDTAB
+ JSR CMDRES ; Keeping the drive select bits, I hope
+ LDY OLDDRV
+ ANDIM &08
+ BEQ DRVSL0 ; If it hasn't loaded yet, tell it again
+
+;*********** Invalidate old catalog ************ HMT
+ LDAIM &FF
+ STA CATDRV
+;*********************************************** HMT
+
+STARTW JSR DSKRDY
+ BNE DSKZSK ; Check for Restore sema
+;************************
+ PHP
+ CLI
+ PLP
+;************************ for Escape
+ BIT ESCFLG
+ BPL STARTW
+
+ JSR RESFDC ;************* HMT
+
+ESCAPE JSR ACKESC  ;Cancel escape flag
+ JSR FSTRNG
+ = ESCNUM,"Escape",&00
+
+;Reset the FDC - this requires a reset
+;pulse of at least 2.5uS
+RESFDC LDAIM &01  ;Put it high...
+ STA FDCRES
+ TAX ; X:= 1 (2) Waste time (6 cycles)
+ DEX ; X:= 0 (2)
+ STX FDCRES ; (3) ...and low again
+ JSR INIFDC  ;Re-initialise FDC
+ JMP NMTREL  ;No more need for NMI or tube
+
+SELPAR = &48,&88,&68,&A8
+
+;Ignore tube if present
+DETUBE PHA
+ LDAIM &FF
+ STA HIWORK
+ STA HIWORK + &01
+ PLA
+DSKSEX RTS
+
+;Init for read
+RDINT LDAIM RDMCLA
+ JSR CHKTUB
+RDINT0 LDAIM RDMCLA
+ JSR NMICLA
+ LDAIM &53
+ BNE INTJMP
+
+;Init for write
+WTINT LDAIM WRMCLA
+ JSR CHKTUB
+WRINT0 LDAIM WRMCLA
+ JSR NMICLA
+ LDAIM &4B
+INTJMP STA SAVCOM
+ LDAIM DIRLOW  ;Load into dir space
+ STA RAMADR
+ LDAIM /(DIRLOW )
+ STA RAMADR + &01
+LDTRYS LDAIM TRIES
+ STA CNTA
+ RTS
+
+;Check whether tube should be used
+;Returns:
+; Tubed => C clear,TUBFLG=$FF
+; Untubed => C set,TUBFLG=$00
+DOADDR LDA TUBCOM
+ PHA  ;Just takes address at LDLOW
+ LDA TUBFLG
+ JMP DOADD0
+
+CHKTUB PHA  ;Stores in LDLOW
+ STA TUBCOM
+ LDA WORK + &02
+ STA LDLOW
+ LDA WORK + &03
+ STA LDLOW + &01
+ LDA HIWORK
+ AND HIWORK + &01
+ ORA NOTUBE
+ EORIM &FF
+ STA TUBFLG  ;Store current tube status
+DOADD0 SEC
+ BEQ CKTUB1
+ JSR CLATUB
+ LDXIM LDLOW
+ LDYIM /(LDLOW )
+ PLA
+ PHA
+ JSR TUBADR
+ CLC
+CKTUB1 PLA
+ RTS
+
+;Claim tube - if not ready hang until
+; it is ready
+CLATUB PHA
+CLATB0 LDAIM &C0 + TUBEID  ;Magic number for claim
+ JSR TUBADR
+ BCC CLATB0
+ PLA
+ RTS
+
+;Check for errors - retry if required
+;and go onto next track if OK
+CHKGET JSR DSKRES
+ BNE CHKER1
+ JSR LDTRYS  ;Reset tries counter
+ INC TRACK
+ LDAIM &00
+ STA SECTOR
+ LDA SECNO  ;Update address for tube
+ CLC
+ ADC LDLOW + &01
+ STA LDLOW + &01
+ BCC GETTS
+ INC LDLOW + &02
+ BNE GETTS
+ INC LDLOW + &03
+ BCS GETTS  ;Always
+CHKER1 DEC CNTA  ;Too many errors ?
+ BPL CHKER4
+ JMP DKNERN
+CHKER4 LDYIM &04  ;Restore params
+CHKER2 LDAAY SAVPAR
+ STAAY READNO
+ DEY
+ BPL CHKER2
+ TXA  ;Restore address if required
+ PHA
+ JSR DOADDR
+ PLA
+ TAX
+
+;Get track and sectors
+GETTS LDA READNO + &02  ;Finished ??
+ BEQ GETTS2
+ LDYIM &04  ;Backup params
+GETTS3 LDAAY READNO
+ STAAY SAVPAR
+ DEY
+ BPL GETTS3
+ LDA SAVCOM  ;No - start new R/W
+ JSR CMDDRV
+ LDA TRACK
+ JSR DSKPAR
+ LDA SECTOR
+ JSR DSKPAR
+ LDAIM SECTRK  ;Get sectors left
+ SEC
+ SBC SECTOR
+ STA SECNO
+ LDA READNO + &02
+ CMPIM &01  ;Lots left ??
+ BNE GETTS0
+ LDA READNO + &01
+ BEQ GETTS0 ;**************************
+ CMP SECNO
+ BCC GETTS1
+GETTS0 LDA SECNO
+GETTS1 ORAIM &20  ;256 Byte sectors
+
+;Chuck data at disk parameter register
+DSKPAR PHA
+DSKPRL LDA FDCS
+ ANDIM &20
+ [ $emu
+ NOP
+ NOP
+ |
+ BNE DSKPRL
+ ]
+ PLA
+ STA FDCP
+GETTS2 RTS
+
+;Send command to disk controller
+; setting the drive bits
+CMDDRV PHA
+ LDA FDRIVE
+ RORA
+ PLA
+ BCC DSKCMD
+ EORIM &C0
+
+;Bung command at Disc Controller
+; commmand register
+DSKCMD BIT FDCC
+ [ $emu
+ NOP
+ NOP
+ |
+ BMI DSKCMD
+ ]
+ STA FDCC
+ RTS
+
+ ; Put a sequence of commands and get a result
+CMDRES JSR CMDPAR
+;Get result from Disc Controller result
+; register
+DSKRES JSR DSKWAI
+ LDA FDCR
+ RTS
+
+;Wait for disk to finish
+DSKWAI
+DSKWA0 BIT FDCS
+ [ $emu
+ NOP
+ NOP
+ |
+ BMI DSKWA0
+ ]
+ BIT FDCS
+ [ $emu
+ NOP
+ NOP
+ |
+ BMI DSKWA0
+ ]
+ RTS
+
+
+;Init FDC chip.
+INIFDC JSR READSW  ;Work out D Drives from switches
+ TXA
+ ANDIM &30
+ LSRA
+ LSRA
+ STA TEMP
+ LSRA
+ ADC TEMP
+ TAY
+ JSR CMDPAR
+ LDYIM INIDKZ - CMDTAB
+ LDXIM &03
+DSKINL JSR CMDPAR  ;Init drives
+ DEX
+ BNE DSKINL
+ ; and set the restore semaphore
+ STX QSTORE ; to 0
+ RTS
+
+
+CMDTAB = &35,&0D,&02,&08,&C0,&EA  ;Tandon (pushing it)
+ = &35,&0D,&03,&08,&C0,&EA  ;Shugart + Tandon (easy)
+
+ = &35,&0D,&03,&08,&C7,&EA  ;Teac FD55 ************ HMT
+
+ = &35,&0D,&0C,&0A,&C8,&EA  ;Olivetti
+INIDKZ = &35,&10,&FF,&FF,&00,&EA  ;Bad tracks surface 0
+ = &35,&18,&FF,&FF,&00,&EA  ;Bad tracks surface 1
+ = &3A,&17,&C1,&EA  ;Mode register setup
+DSKQRZ = &69,&00,&EA  ;Seek track zero
+CHKSPD = &5F,&00,&08,&22,&EA  ;Verify secs 8,9 track 0
+ ; ******RSRTK0 = $3D,$12,$EA ; Read special register - Track # on drive 0
+ ; ******RSRTK1 = $3D,$1A,$EA ; Read special register - Track # on drive 1
+RSRSEC = &3D,&06,&EA ; Read special register - Sector number
+RSROP = &7D,&23,&EA ; Read Special Reg. - Output port
+
+
+;Code to catch NMIs ends up here with
+;read code inserted by default - and
+;a write modification overlayed on top
+;for writing - surprisingly both are
+;the same length
+
+
+;++++++++++++
+;Write to disk overlay
+WRIOVR LDY TUBFLG
+ BEQ WMEBYT
+
+;Load from tube to disk
+ LDA TUBE
+ STA FDCD
+ JMP MENMI0 - RDMNMI + INTNMI
+
+WMEBYT LDAIY RAMADR  ;Get data from memory
+ STA FDCD  ;Store to disk
+;++++++++++++
+
+
+;Read from disk
+RDMNMI PHA  ;Save A and Y
+ TYA
+ PHA
+ LDA FDCC  ;Check for data ready
+ ANDIM &04
+ BEQ NMIB  ;Not data
+;------------
+;This bit gets overlayed if writing
+NMIOVR
+ LDA FDCD  ;Read data off disk
+ LDY READNO + &02
+ BEQ MENMI2
+ LDY TUBFLG
+ BEQ RMEBYT
+
+;Store across tube
+ STA TUBE
+ BNE MENMI0  ;Always
+
+RMEBYT STAIY RAMADR  ;Store in memory
+;------------
+MENMI1 INC RAMADR  ;Increment address
+ BNE MENMI0
+ INC RAMADR + &01
+MENMI0 DEC READNO
+ BNE MENMI2
+ DEC READNO + &01
+ BNE MENMI2
+ DEC READNO + &02
+MENMI2 PLA  ;Return restoring Y and A
+ TAY
+ PLA
+NOPNMI RTI
+
+;Not a byte moved interupt
+NMIB LDA FDCS
+ ANDIM &08
+ BEQ MENMI2  ;Unknown - ignore
+
+;End of sectors - look for more
+ LDA ROMID
+ PHA
+MYID LDAIM &00  ;Switch ROMS
+ STA ROMID
+ STA ROMSW
+ JSR CHKGET
+ PLA
+ STA ROMID
+ STA ROMSW
+ SEC
+ BCS MENMI2
+
+RMFNMI PHA
+ TYA
+ PHA
+ LDA FDCC
+ ANDIM &04
+ BEQ RMFNM0
+ LDA FDCD
+ LDYIM &00
+ STAIY RAMADR
+ INC RAMADR
+ BNE RMFNM0
+ INC RAMADR + &01
+RMFNM0 PLA
+ TAY
+ PLA
+ RTI
+
+WMFNMI PHA
+ TYA
+ PHA
+ LDA FDCC
+ ANDIM &04
+ BEQ WMFNM0
+ LDYIM &00
+ LDAIY RAMADR
+ STA FDCD
+ INC RAMADR
+ BNE WMFNM0
+ INC RAMADR + &01
+WMFNM0 PLA
+ TAY
+ PLA
+ RTI
+
+RTFNMI PHA
+ LDA FDCC
+ ANDIM &04
+ BEQ RTFNM0
+ LDA FDCD
+ STA TUBE
+RTFNM0 PLA
+ RTI
+
+WTFNMI PHA
+ LDA FDCC
+ ANDIM &04
+ BEQ FNMIY
+ LDA TUBE
+ STA FDCD
+FNMIY PLA
+ RTI
+
+NMIEND
+TTSSER JSR DIGER1
+ JSR GSTRNG
+ = &00," at "
+ LDA TRACK
+ JSR DIGER1
+ JSR GSTRNG
+ = &00,"/"
+ LDYIM RSRSEC-CMDTAB
+ JSR CMDRES
+ ; Put 2 hex digits from A at $0100,X
+DIGER1 PHA
+ JSR SFOUR
+ JSR DIGUT1
+ STAAX &0100
+ INX
+ PLA
+ JSR DIGUT1
+ STAAX &0100
+ INX
+ RTS
+
+
+
+ LNK DOS04
+

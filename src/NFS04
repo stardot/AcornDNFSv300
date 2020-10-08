@@ -1,0 +1,115 @@
+; > NFS04
+ TTL Tx/Rx and Screen I/O
+ OPT DEBUG
+
+VSTRNG  ;inline message handler,does not handle BRK!!
+ PLA
+ STA WORK
+ PLA
+ STA WORK +&01 ;current address
+ LDYIM ZERO
+VSTRLP INC WORK
+ BNE INCPX
+ INC WORK +&01
+INCPX LDAIY WORK ;step pointer by 1
+ BMI VSTRNX
+ JSR OSASCI
+ JMP VSTRLP
+VSTRNX JMI WORK ;continue the execution
+
+; Routine to extract the FS number (or whatever) from
+; a string pointed at by TEMPX.
+
+DECIN LDAIM ZERO
+ STA W1
+DECIN1 LDAIY TEMPX
+; CMPIM $40
+; BCS DECIN3
+ CMPIM "."
+ BEQ DECIN2
+ BCC DECIN3 ;** 21/9/83 **
+; BMI DECIN3
+ ANDIM &0F
+
+ STA W2 ;addition routine
+ ASL W1
+ LDA W1
+ ASLA
+ ASLA
+ ADC W1
+ ADC W2
+ STA W1
+
+ INY
+ BNE DECIN1
+DECIN3 CLC
+DECIN2 LDA W1 ;return A as number read
+ RTS
+
+Y2FSA TAY ;handle passed in A, not Y here
+Y2FS
+;Converts the FS handle to one
+;segregated inside the BBCpu. This
+;allows the user to discriminate handles
+
+;Passed handle in Y
+
+ CLC
+Y2FSX PHA ;enter here for FINDOP
+ TXA
+ PHA
+
+ TYA ;get the handle
+ BCC Y2FSL5 ;detect 0-handle
+ BEQ Y2FSL4
+Y2FSL5 SEC
+ SBCIM HAND -&01 ;base for FS handles
+ TAX ;>0
+ LDAIM ONE
+Y2FSL2 ASLA ;this loop returns 0 for invalid handles
+ DEX
+ BNE Y2FSL2 ;set up the handle
+ RORA ;shift right to adjust
+
+ TAY
+ BNE Y2FSL4 ;detect bad handle
+ DEY ;pass $FF as handle
+Y2FSL4 PLA
+ TAX
+ PLA
+ RTS ;return with Y=FS handle
+
+FS2A    ;handle passed in A
+;Need to convert FS to internal form.
+ LDXIM HAND - 1
+FS2AL1 INX
+ LSRA
+ BNE FS2AL1
+ TXA
+ RTS
+
+;Return with A=internal form
+DATA0 LDXIM FOUR
+DATA01 LDAAX WORK -&01
+ EORAX WORK +&03 ;testing for zero data
+ BNE DATA02
+ DEX
+ BNE DATA01
+DATA02 RTS ;return Z=1 for no data
+
+HANDLE LDXIM HAND
+ LDYIM HAND +&07
+HANDX RTS ;return the bounds on FS handles
+
+SETEOF ORA EOF
+ BNE SETCLR
+
+CLREOF EORIM FILLER
+ AND EOF
+
+SETCLR STA EOF
+ RTS
+
+
+ LNK NFS05
+

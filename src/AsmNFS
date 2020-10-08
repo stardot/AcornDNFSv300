@@ -1,0 +1,8 @@
+*| -> AsmNFS
+*TurMasm
+*OPT 1 1
+
+ASM NFS00
+
+
+*AsmGET
